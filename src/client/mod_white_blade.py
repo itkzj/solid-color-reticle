@@ -42,7 +42,10 @@ def _number(value):
 
 def _ready_text():
     try:
+        from helpers import getClientLanguage
         from helpers.i18n import makeString
+        if getClientLanguage() in ('zh_cn', 'zh_tw', 'cn'):
+            return 'Ready'
         text = makeString(_READY_KEY)
         if isinstance(text, basestring) and text and text not in (_READY_KEY, _READY_KEY[1:], _READY_KEY.split(':', 1)[1]):
             return text
