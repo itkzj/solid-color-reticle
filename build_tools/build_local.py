@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Build a private test package against the user's exact, accepted V19 archive."""
+"""Build a local test package from the matching installed game client."""
 import argparse
 from hashlib import sha256
 from io import BytesIO
@@ -16,11 +16,11 @@ AS3 = ROOT / 'src/as3'
 CLIENT = ROOT / 'src/client'
 FLASH = 'res/gui/flash/'
 MODS = 'mods/2.4.1.1/'
-BASELINE_MOD = MODS + 'whiteblade.crosshair_1.18.0.wotmod'
-BASELINE_SHA = '9a755f0117278b56aa98eb459bb9a9866906993840dd877bb6f141c9e0b39e4e'
-# ponytail: exact V19 only, re-audit linkage and placements for another baseline.
-HUD_TAG = {'arcade': (69, 17, '11.4'), 'sniper': (107, 17, '11.4'),
-           'strategic': (87, 15, '11.0')}
+# ponytail: pinned to the tested client build, verify linkages before updating.
+HUD_TAG = {'arcade': (2, 175, 'f1b27c13286cb7b92f04b258272584299ecea9ec42be97d9ccede84193540377'),
+           'sniper': (4, 249, '62de4e84c5014f8451597af55f69f1a0c5ca875582d435f94df9cde50ffa890b'),
+           'strategic': (3, 61, '1174e9997e83c47c820fe3a13ea99ad52abee71dd6a8c93e06e40d6068bd1734')}
+CONTROLS_SHA = 'a0e318c7ee469629e86c6b72282fae5d1423c28e0f3bfbd589feaaf7e65c4565'
 PYTHON = {'mod_white_blade': 'res/scripts/client/gui/mods/mod_white_blade.pyc',
           'white_blade_geometry': 'res/scripts/client/white_blade_geometry.pyc'}
 
@@ -43,17 +43,12 @@ def archive_bytes(files):
     return output
 
 
-def read_baseline(path):
-    raw = path.read_bytes()
-    require(sha256(raw).hexdigest() == BASELINE_SHA, 'Expected the accepted V19 ZIP (SHA-256 mismatch)')
-    with ZipFile(BytesIO(raw)) as archive:
-        mod = archive.read(BASELINE_MOD)
-    with ZipFile(BytesIO(mod)) as archive:
-        expected = {'meta.xml', FLASH + 'crosshairControls.swf', *PYTHON.values(),
-                    *(FLASH + mode + 'Crosshair.swf' for mode in HUD_TAG)}
-        require(len(archive.namelist()) == len(expected) and set(archive.namelist()) == expected,
-                'Unexpected V19 members')
-        return {name: archive.read(name) for name in archive.namelist()}
+def read_stock(packages, part, filename, expected):
+    member = 'gui/flash/' + filename
+    with ZipFile(packages / f'gui-part{part}.pkg') as archive:
+        data = archive.read(member)
+    require(sha256(data).hexdigest() == expected, 'Unsupported client SWF: ' + member)
+    return data
 
 
 def read_swf(data):
@@ -133,20 +128,33 @@ def rename_strings(abc, names):
     return b''.join(chunks) + abc[pos:]
 
 
-def replace_hud(original, donor, mode):
-    index, version, _ = HUD_TAG[mode]
+def insert_adapter(original, donor, bindings, aliases=None):
     header, tags = read_swf(original)
     _, donor_tags = read_swf(donor)
-    require(original[3] == donor[3] == version, 'SWF version mismatch')
-    require(len(tags) > index + 1 and tags[index][0] == 82
-            and tags[index][1][4:11] == b'frame1\0'
-            and tags[index + 1][0] == 76, 'Unexpected V19 HUD location')
-    abc, = [payload for code, payload, _ in donor_tags if code == 82]
-    if mode == 'strategic':
-        abc = rename_strings(abc, {b'WhiteBladeHUD': b'WhiteBladeStrategicHUD',
-                                   b'WhiteBladeMarkers': b'WhiteBladeStrategicMarkers'})
+    require(original[3] == donor[3] == 17, 'SWF version mismatch')
+    (abc_index,) = [index for index, tag in enumerate(tags) if tag[0] == 82]
+    (symbol_index,) = [index for index, tag in enumerate(tags) if tag[0] == 76]
+    require(abc_index < symbol_index, 'Official ABC must precede SymbolClass')
+    table = tags[symbol_index][1]
+    count, = struct.unpack_from('<H', table)
+    cursor = 2
+    symbols = {}
+    for _ in range(count):
+        symbol_id, = struct.unpack_from('<H', table, cursor)
+        end = table.index(bytes(1), cursor + 2)
+        symbols[table[cursor + 2:end].decode('utf-8')] = symbol_id
+        cursor = end + 1
+    require(cursor == len(table) and len(symbols) == count
+            and all(symbols.get(name) == symbol_id for name, (symbol_id, _) in bindings.items()),
+            'Unexpected official SWF binding')
+    native = rename_strings(tags[abc_index][1],
+                            {name.encode(): base.encode() for name, (_, base) in bindings.items()})
+    donor_abc, = [payload for code, payload, _ in donor_tags if code == 82]
+    if aliases:
+        donor_abc = rename_strings(donor_abc, aliases)
     output = [raw for _, _, raw in tags]
-    output[index] = struct.pack('<HI', (82 << 6) | 63, len(abc)) + abc
+    output[abc_index] = abc_tag(native)
+    output.insert(symbol_index, abc_tag(donor_abc))
     body = header + b''.join(output)
     data = (original[:4] + struct.pack('<I', len(body) + 8)
             + (zlib.compress(body, 9) if original[:3] == b'CWS' else body))
@@ -156,37 +164,28 @@ def replace_hud(original, donor, mode):
     return data
 
 
+def abc_tag(payload):
+    return struct.pack('<HI', (82 << 6) | 63, len(payload)) + payload
+
+
 def stub_source(mode):
     title = mode.title()
-    base = f'WhiteBlade{title}Base'
-    common = ('public function as_setReloadingBaseTime(v:Number):void {}\n'
-              'public function as_setAmmoQuantity(v:int,low:Boolean):void {}\n'
-              'public function as_setShellParams(speed:Number,gravity:Number,name:String,splash:Number,type:Number,penetration:Number,damage:Number):void {}\n')
-    if mode == 'strategic':
-        extra = ('public function as_updateHeight(v:Number):void {}\n'
-                 'public function as_setVehicleParams(vehicle:String,gun:String,maxHP:Number):* {return null;}\n')
-    else:
-        extra = ('public function as_updateHealth(v:Number):void {}\n'
-                 'public function as_setVehicleParams(vehicle:String,gun:String,maxHP:Number,range:Number=400):void {}\n')
-    return (f'package {{ import net.wg.gui.components.crosshairPanel.Crosshair{title};\n'
-            f'public class {base} extends Crosshair{title} {{\n' + common + extra + '}}\n')
+    parent = f'Crosshair{title}'
+    return (f'package {{ import net.wg.gui.components.crosshairPanel.{parent};\n'
+            f'public class WhiteBlade{title}Base extends {parent} {{}} }}\n')
 
 
-def compile_hud(mode, tools, scratch, render):
-    base = f'WhiteBlade{mode.title()}Base'
+def compile_adapter(tools, work, main, stubs, adapters):
     java = tools / 'jre/jdk-21.0.13+9-jre/bin/java.exe'
     flex = tools / 'flex'
     external = [tools / 'playerglobal32_0.swc', tools / 'extlib/battleCrosshairsApp.swc']
-    version, target = HUD_TAG[mode][1:]
     common = ['+flexlib=' + str(flex / 'frameworks'), '-load-config=',
               '-compiler.library-path=', '-compiler.theme=', '-debug=false', '-optimize=true',
-              '-compiler.actionscript-file-encoding=UTF-8', '-target-player=' + target,
-              '-swf-version=' + str(version)]
-    work = scratch / mode
+              '-compiler.actionscript-file-encoding=UTF-8', '-target-player=11.4', '-swf-version=17']
     work.mkdir()
-    (work / (base + '.as')).write_text(stub_source(mode), encoding='utf-8')
-    wrapper = work / f'Crosshair{mode.title()}UI.as'
-    wrapper.write_text(render(mode), encoding='utf-8')
+    for name, text in {**stubs, **adapters}.items():
+        (work / (name + '.as')).write_text(text, encoding='utf-8')
+    wrapper = work / (main + '.as')
     stub, donor = work / 'external.swc', work / 'donor.swf'
 
     def run(tool, libraries, *args):
@@ -194,22 +193,44 @@ def compile_hud(mode, tools, scratch, render):
                         *common, '-compiler.external-library-path=' + ','.join(map(str, libraries)),
                         *args], check=True)
 
-    run('compc', external, '-compiler.source-path=' + str(work), '-include-classes=' + base,
+    run('compc', external, '-compiler.source-path=' + str(work), '-include-classes=' + ','.join(stubs),
         '-output=' + str(stub))
-    run('mxmlc', [stub, *external], '-compiler.source-path=' + str(AS3),
+    run('mxmlc', [stub, *external], '-compiler.source-path=' + str(AS3), '-compiler.source-path+=' + str(work),
         '-output=' + str(donor), str(wrapper))
     return donor.read_bytes()
 
 
-def build(baseline, tools, output):
-    files = read_baseline(baseline)
+def build(packages, tools, output):
     require(not output.exists(), 'Output already exists')
+    files = {}
     render = runpy.run_path(str(AS3 / 'adapter.py'))['render']
     with TemporaryDirectory(prefix='solid-color-reticle-', dir=output.parent) as temp:
         scratch = Path(temp)
-        for mode in HUD_TAG:
-            name = FLASH + mode + 'Crosshair.swf'
-            files[name] = replace_hud(files[name], compile_hud(mode, tools, scratch, render), mode)
+        for mode, (part, symbol_id, fingerprint) in HUD_TAG.items():
+            filename = mode + 'Crosshair.swf'
+            title = mode.title()
+            name, base = f'Crosshair{title}UI', f'WhiteBlade{title}Base'
+            stock = read_stock(packages, part, filename, fingerprint)
+            donor = compile_adapter(tools, scratch / mode, name, {base: stub_source(mode)}, {name: render(mode)})
+            aliases = None
+            if mode == 'strategic':
+                aliases = {b'WhiteBladeHUD': b'WhiteBladeStrategicHUD',
+                           b'WhiteBladeMarkers': b'WhiteBladeStrategicMarkers'}
+            files[FLASH + filename] = insert_adapter(stock, donor, {name: (symbol_id, base)}, aliases)
+        controls = runpy.run_path(str(AS3 / 'controls.py'))
+        links = controls['LINKAGES']
+        bases = {name: controls['base'](name) for name in links}
+        adapters = {name: controls['render'](name) for name in links}
+        adapters['SolidReticleLinkages'] = (
+            'package { import flash.display.Sprite; public class SolidReticleLinkages extends Sprite {'
+            'public function SolidReticleLinkages() {} '
+            'private var linkages:Array = [' + ','.join(links) + ']; }}')
+        donor = compile_adapter(tools, scratch / 'controls', 'SolidReticleLinkages',
+                                {bases[name]: controls['stub'](name) for name in links}, adapters)
+        filename = 'crosshairControls.swf'
+        stock = read_stock(packages, 1, filename, CONTROLS_SHA)
+        files[FLASH + filename] = insert_adapter(stock, donor,
+                                                  {name: (link[0], bases[name]) for name, link in links.items()})
         for module, member in PYTHON.items():
             pyc = scratch / (module + '.pyc')
             subprocess.run([str(tools / 'python27/python.exe'), '-B', '-c',
@@ -219,12 +240,12 @@ def build(baseline, tools, output):
             require(files[member][:4] == b'\x03\xf3\x0d\x0a', 'Expected CPython 2.7 bytecode')
     files['meta.xml'] = '''<root>
   <id>local.solid_color_reticle</id>
-  <version>1.0</version>
+  <version>1.1.0-dev</version>
   <name>纯色瞄准</name>
-  <description>Solid Color Reticle V1.0. World of Tanks CN 2.4.1.1.</description>
+  <description>Solid Color Reticle development build. World of Tanks CN 2.4.1.1.</description>
 </root>
 '''.encode('utf-8')
-    package = archive_bytes({MODS + 'solid_color_reticle_1.0.wotmod': archive_bytes(files)})
+    package = archive_bytes({MODS + 'solid_color_reticle_1.1.0-dev.wotmod': archive_bytes(files)})
     with output.open('xb') as stream:
         stream.write(package)
     require(output.read_bytes() == package, 'Output readback mismatch')
@@ -233,8 +254,8 @@ def build(baseline, tools, output):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('baseline', type=Path, help='Accepted V19 ZIP already on this machine')
+    parser.add_argument('packages', type=Path, help='Installed client res/packages directory')
     parser.add_argument('tools', type=Path, help='Existing local Java, Flex, SDK and Python 2.7 tools')
     parser.add_argument('output', type=Path, help='New private test ZIP outside the source repository')
     args = parser.parse_args()
-    build(args.baseline.resolve(), args.tools.resolve(), args.output.resolve())
+    build(args.packages.resolve(), args.tools.resolve(), args.output.resolve())
