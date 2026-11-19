@@ -192,6 +192,36 @@ class _Bridge(object):
             if isinstance(row, dict) and row.get('shellIntCD') in valid:
                 self.flights[row['shellIntCD']] = _number(row.get('flyTime'))
 
+    def impact_flight(self, vehicle, shot):
+        player = BigWorld.player()
+        handler = getattr(player, 'inputHandler', None)
+        if handler is None:
+            return _NAN
+        from aih_constants import CTRL_MODE_NAME
+        if handler.ctrlModeName not in (CTRL_MODE_NAME.STRATEGIC, CTRL_MODE_NAME.ARTY):
+            return _NAN
+        if player.getVehicleAttached() is not vehicle:
+            return _NAN
+        aim_point = handler.getDesiredShotPoint(ignoreAimingMode=True)
+        if aim_point is None:
+            return _NAN
+
+        # The original SPG HUD clears NOT_HIT, including when terrain intercepts the shot.
+        # Use the same native trajectory and timing APIs with the first impact as the endpoint.
+        from AvatarInputHandler.AimingSystems import CollisionStrategy, getCappedShotTargetInfos
+        from AvatarInputHandler.spg_marker_helpers.spg_marker_helpers import getSPGShotFlyTime
+        origin, velocity, gravity = player.gunRotator.getShotParams(
+            aim_point, ignoreYawLimits=True, overrideShotDescr=shot)
+        lower, upper = player.arena.getSpaceBB()
+        impact, _, _, used_max_distance = getCappedShotTargetInfos(
+            origin, velocity, gravity, shot, player.playerVehicleID, lower, upper,
+            CollisionStrategy.COLLIDE_DYNAMIC_AND_STATIC)
+        if impact is None or used_max_distance:
+            return _NAN
+        attrs = self.panel.sessionProvider.shared.feedback.getVehicleAttrs()
+        duration = _number(getSPGShotFlyTime(impact, velocity, origin, shot.maxDistance, shot.speed, attrs))
+        return duration if duration > 0 else _NAN
+
     def full_reload_time(self, gun, clip_size, base, interval):
         if gun is not self.reload_gun:
             self.reload_gun = gun
@@ -251,6 +281,8 @@ class _Bridge(object):
                             data['penetration'] = _number(power[0])
                         # Native vehicles._readShellLocal, source lines 8869/8956/9027.
                         data['splash'] = _number(getattr(shell.type, 'explosionRadius', None))
+                        if not data['flight'] > 0:
+                            data['flight'] = self.impact_flight(vehicle, shot)
                         break
             except Exception:
                 _log('current shell')

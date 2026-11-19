@@ -27,6 +27,7 @@ METHODS='''
                 if(child!=h && child!=cassetteMC && HIDE.indexOf(child.name)>=0)child.visible=false;
                 if(ARTY && child is ArtyShotIndicatorsPanel)child.visible=false;
             }
+            if(quickReloadingTimerTextField)quickReloadingTimerTextField.visible=false;
             if(h.parent!=this)addChild(h);
             if(h.data.arty)WhiteBladeMarkers.apply(parent);
             h.data.centerType=centerType;h.data.centerOpacity=centerAlpha;
@@ -62,8 +63,8 @@ METHODS='''
             if(!value)return false;
             var h:WhiteBladeHUD=hud();
             var d:Object=h.data;
-            if(ARTY&&value.hasOwnProperty("fullReloadTime"))d.total=Number(value.fullReloadTime);
-            else if(!ARTY&&value.hasOwnProperty("total"))d.total=Number(value.total);
+            if(value.hasOwnProperty("fullReloadTime"))d.total=Number(value.fullReloadTime);
+            else if(value.hasOwnProperty("total"))d.total=Number(value.total);
             for each(var k:String in numberFields)
                 if(value.hasOwnProperty(k))d[k]=Number(value[k]);
             if(value.hasOwnProperty("shell"))d.shell=String(value.shell);

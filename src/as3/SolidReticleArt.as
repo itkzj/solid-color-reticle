@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package {
+    import flash.display.BitmapData;
     import flash.display.CapsStyle;
     import flash.display.Graphics;
     import flash.display.JointStyle;
     import flash.display.LineScaleMode;
+    import flash.geom.Matrix;
 
     public final class SolidReticleArt {
         public static const WHITE:uint=0xF7FAFF, GREEN:uint=0x7FFF36;
@@ -50,18 +52,17 @@ package {
             }
         }
 
+        private static const BLADE_GAP:Number=6.75;
+        private static const BLADE_LENGTH:Number=81;
+        private static const BLADE_HALF_HEIGHT:int=14;
+        private static const BLADE_SAMPLES:int=4;
+        private static const blades:Object={};
+
         public static function gun(g:Graphics, type:Number, color:uint, blade:Boolean):void {
             g.clear();
             if (!isFinite(type)||type!=int(type)||type<0||type>=15) return;
             var group:int=int(type/3);
-            if (blade) {
-                // Match the user's diagonal indication without an imported gradient bitmap.
-                stroke(g,2,color,LineScaleMode.NORMAL);
-                for (var side:int=-1;side<=1;side+=2) {
-                    segment(g,side*18,-18,side*34,-34);
-                    segment(g,side*18,18,side*34,34);
-                }
-            }
+            if (blade) drawBlades(g,color);
             for (var pass:int=0;pass<2;pass++) {
                 var ink:uint=pass?color:BACK;
                 var width:Number=group==0?2.5:group==3?1.25:2;
@@ -85,6 +86,93 @@ package {
                     segment(g,0,-15,0,-7); segment(g,0,7,0,15);
                 }
             }
+        }
+
+        private static function drawBlades(g:Graphics,color:uint):void {
+            var image:BitmapData=blades[color];
+            if (!image) {
+                image=makeBlade(color);
+                blades[color]=image;
+            }
+            var length:Number=image.width/BLADE_SAMPLES;
+            var half:Number=BLADE_HALF_HEIGHT;
+            for (var x:int=-1;x<=1;x+=2) {
+                for (var y:int=-1;y<=1;y+=2) {
+                    var dx:Number=x*Math.SQRT1_2, dy:Number=y*Math.SQRT1_2;
+                    var matrix:Matrix=new Matrix(dx/BLADE_SAMPLES,dy/BLADE_SAMPLES,
+                        -dy/BLADE_SAMPLES,dx/BLADE_SAMPLES,dy*half,-dx*half);
+                    g.beginBitmapFill(image,matrix,false,true);
+                    g.moveTo(dy*half,-dx*half);
+                    g.lineTo(dx*length+dy*half,dy*length-dx*half);
+                    g.lineTo(dx*length-dy*half,dy*length+dx*half);
+                    g.lineTo(-dy*half,dx*half);
+                    g.lineTo(dy*half,-dx*half);
+                    g.endFill();
+                }
+            }
+        }
+
+        private static function makeBlade(color:uint):BitmapData {
+            // Historical pointed-spindle design: narrow spine, inner highlight and a separate soft halo.
+            var image:BitmapData=new BitmapData(Math.ceil((BLADE_GAP+BLADE_LENGTH)*BLADE_SAMPLES),
+                BLADE_HALF_HEIGHT*2*BLADE_SAMPLES,true,0);
+            image.lock();
+            for (var x:int=0;x<image.width;x++) {
+                var along:Number=(x+.5)/BLADE_SAMPLES;
+                var distance:Number=along-BLADE_GAP;
+                var q:Number=Math.max(0,Math.min(1,distance/BLADE_LENGTH));
+                var envelope:Number=haloEnvelope(distance);
+                var innerBlend:Number=smoothstep((12-distance)/8);
+                if (innerBlend>0) {
+                    var total:Number=0, weight:Number=0;
+                    for (var tap:int=-20;tap<=20;tap++) {
+                        var kernel:Number=gaussian(tap/5);
+                        total+=kernel*haloEnvelope(distance+tap/2);
+                        weight+=kernel;
+                    }
+                    envelope+=innerBlend*(total/weight-envelope);
+                }
+                var width:Number=q<.13?1.1*q/.13:q<.26?1.1-.1*(q-.13)/.13:
+                    q<.65?1-.57*(q-.26)/.39:.43*(1-q)/.35;
+                var highlight:Number=.98*gaussian((q-.15)/.105);
+                for (var y:int=0;y<image.height;y++) {
+                    var across:Number=(y+.5)/BLADE_SAMPLES-BLADE_HALF_HEIGHT;
+                    var clearance:Number=smoothstep((Math.sqrt(along*along+across*across)-4.44)/2.22);
+                    var glow:Number=(.19*gaussian(across/3.7)+.27*gaussian(across/1.65))*envelope*clearance;
+                    var body:Number=0, core:Number=0;
+                    if (distance>=0 && distance<=BLADE_LENGTH) {
+                        body=.8*Math.max(0,Math.min(1,(width-Math.abs(across))*BLADE_SAMPLES+.5))*(1-.73*q);
+                        core=highlight*gaussian(across/.235);
+                    }
+                    var light:Number=glow+body;
+                    var red:Number=Math.min(255,light*((color>>16)&255)+core*255);
+                    var green:Number=Math.min(255,light*((color>>8)&255)+core*240);
+                    var blue:Number=Math.min(255,light*(color&255)+core*186);
+                    var alpha:int=Math.round(Math.max(red,green,blue));
+                    if (alpha>0) {
+                        var normalize:Number=255/Math.max(red,green,blue);
+                        image.setPixel32(x,y,(alpha<<24)|(Math.round(red*normalize)<<16)|
+                            (Math.round(green*normalize)<<8)|Math.round(blue*normalize));
+                    }
+                }
+            }
+            image.unlock();
+            return image;
+        }
+
+        private static function haloEnvelope(distance:Number):Number {
+            if (distance<=0 || distance>=BLADE_LENGTH) return 0;
+            var q:Number=distance/BLADE_LENGTH;
+            return Math.pow(Math.sin(Math.PI*q),.46)*Math.exp(-1.85*q);
+        }
+
+        private static function gaussian(value:Number):Number {
+            return Math.exp(-.5*value*value);
+        }
+
+        private static function smoothstep(value:Number):Number {
+            var t:Number=Math.max(0,Math.min(1,value));
+            return t*t*(3-2*t);
         }
 
         public static function point(g:Graphics, color:uint):void {

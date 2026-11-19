@@ -58,7 +58,7 @@ GUN = '''
     private var kind:Number=-1;
     private var state:String="normal";
     private var ready:Boolean=false;
-    private const colors:Object={red:0xF02311,orange:0xFF9900,green:0xC3FF68,
+    private const colors:Object={red:0xF02311,orange:0xFF9900,green:SolidReticleArt.GREEN,
         yellow:0xFFFF00,purple:0x6064DA,pink:0xCC99FF};
 
     override public function setType(value:Number):void {

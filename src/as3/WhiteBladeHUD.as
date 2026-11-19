@@ -247,7 +247,9 @@ package {
             var hp:Number=hpRatio(),color:uint=healthColor(hp),p:Number=reloadCharge();
             var scanning:Boolean=data.reloadState=="reloadingProgress"&&isFinite(data.progress);
             put("remaining",ready()?(data.readyText||"Ready"):number(data.remaining,2," s"));
-            put("total",data.arty?(data.capacity>1?number(data.total,2,"s")+"/"+number(data.burstTime,2,"s"):number(data.total,2,"s")):number(data.total,2," s")+" / "+(data.capacity>1?number(data.burstTime,2," s"):"—"));
+            var fullReload:String=number(data.total,2,"s");
+            if(data.capacity>1)fullReload+="/"+number(data.burstTime,2,"s");
+            put("total",fullReload);
             put("health",number(data.health));fields.health.textColor=color;
             put("distance",data.distance);put("zoom",data.zoom);
             put("height",data.arty?number(data.height,0," m"):"");
