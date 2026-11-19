@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.swf
+*.swc
+*.pkg
+*.wotmod
+*.zip
+*.rar
+*.ttf
+*.otf
+*.ttc
+build/
+dist/
