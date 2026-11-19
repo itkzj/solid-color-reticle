@@ -25,9 +25,13 @@ METHODS='''
                 var child:DisplayObject=getChildAt(i);
                 // Keep native special-mechanic indicators functional; hide only replaced art.
                 if(child!=h && child!=cassetteMC && HIDE.indexOf(child.name)>=0)child.visible=false;
-                if(ARTY && child is ArtyShotIndicatorsPanel)child.visible=false;
+                // ponytail: the pinned strategic timeline has one direct Shape (the stock side arcs); recheck on a client update.
+                if(ARTY && (child is Shape || child is ArtyIndicationScale || child is ArtyShotIndicatorsPanel)) {
+                    child.visible=false;
+                }
             }
             if(quickReloadingTimerTextField)quickReloadingTimerTextField.visible=false;
+            HIDE_NATIVE_ZOOM
             if(h.parent!=this)addChild(h);
             if(h.data.arty)WhiteBladeMarkers.apply(parent);
             h.data.centerType=centerType;h.data.centerOpacity=centerAlpha;
@@ -81,8 +85,9 @@ def render(mode):
     title = mode.title()
     old, base = f'Crosshair{title}UI', f'WhiteBlade{title}Base'
     arty = mode == 'strategic'
-    body='package {\nimport flash.events.Event; import flash.display.DisplayObject; import flash.geom.Rectangle; import flash.utils.getQualifiedClassName;\nimport net.wg.gui.components.crosshairPanel.components.artyShot.ArtyShotIndicatorsPanel;\npublic class '+old+' extends '+base+' {\n'
+    body='package {\nimport flash.events.Event; import flash.display.DisplayObject; import flash.geom.Rectangle; import flash.utils.getQualifiedClassName;\nimport flash.display.Shape; import net.wg.gui.components.crosshairPanel.components.artyScale.ArtyIndicationScale;\nimport net.wg.gui.components.crosshairPanel.components.artyShot.ArtyShotIndicatorsPanel;\npublic class '+old+' extends '+base+' {\n'
     body+='private const ARTY:Boolean='+str(arty).lower()+';\n'
     body+='private const HIDE:Array=["timerProgressTextField","timerCompleteTextField","reloadTimeBlink","reloadingBar","reloadingAnimationMC","healthBarMC","centerMC","netMC","netSeparator","distance","averageDamage"];\n'
     body+='public function '+old+'(){super();addEventListener(Event.ENTER_FRAME,clean);}\n'
-    return body + METHODS + '\n}}\n'
+    hide_zoom = '            if(zoomTF)zoomTF.visible=false;\n' if mode == 'sniper' else ''
+    return body + METHODS.replace('            HIDE_NATIVE_ZOOM\n', hide_zoom) + '\n}}\n'
