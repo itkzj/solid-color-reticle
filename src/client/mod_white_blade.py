@@ -18,6 +18,7 @@ _SHELL_NAMES = {'ARMOR_PIERCING': 'AP', 'ARMOR_PIERCING_CR': 'APCR',
 _DATA_FIELDS = ('health', 'maxHealth', 'total', 'fullReloadTime', 'burstTime', 'height', 'flight',
                 'penetration', 'splash', 'splashPixels', 'splashRadiusX', 'splashRadiusY',
                 'splashRotation', 'splashX', 'splashY')
+_TRAVERSE_FIELDS = ('traverseLeft', 'traverseRight', 'traverseLeftRatio', 'traverseRightRatio', 'traverseRotation')
 _READY_KEY = '#ingame_gui:chat_shortcuts/reloading_ready'
 _logger = logging.getLogger('solid_color_reticle')
 _errors = 0
@@ -409,6 +410,16 @@ class _Bridge(object):
                 _log('geometry sample')
         return data
 
+    def sample_traverse(self):
+        if self.geometry is not None:
+            try:
+                from white_blade_geometry import traverse
+                vehicle = self.panel.sessionProvider.shared.vehicleState.getControllingVehicle()
+                return traverse(self.panel, vehicle)
+            except Exception:
+                _log('gun traverse')
+        return (_NAN,) * len(_TRAVERSE_FIELDS)
+
     def schedule(self):
         if _active is self and self.panel is not None and self.callback is None:
             try:
@@ -426,6 +437,7 @@ class _Bridge(object):
                 _stop(self.panel)
                 return
             data = self.sample()
+            data.update(zip(_TRAVERSE_FIELDS, self.sample_traverse()))
             found = False
             flash = self.panel.flashObject
             # Native initCrosshairs adds the wrappers directly; Timeline.name is read-only.

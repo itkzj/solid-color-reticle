@@ -22,10 +22,12 @@ package {
                         stroke(g,ink+(pass?0:2),pass?(progress>=1?GREEN:WHITE):BACK,LineScaleMode.NONE);
                         g.drawCircle(0,0,RADIUS);
                     } else {
-                        stroke(g,ink,GREEN,LineScaleMode.NONE);
-                        arc(g,0,progress);
                         stroke(g,ink,WHITE,LineScaleMode.NONE);
                         arc(g,progress,1);
+                        stroke(g,ink+2,BACK,LineScaleMode.NONE);
+                        arc(g,0,progress);
+                        stroke(g,ink,GREEN,LineScaleMode.NONE);
+                        arc(g,0,progress);
                     }
                 } else {
                     for (var i:int=0;i<TICKS;i++) {
@@ -56,6 +58,8 @@ package {
         private static const BLADE_LENGTH:Number=81;
         private static const BLADE_HALF_HEIGHT:int=14;
         private static const BLADE_SAMPLES:int=4;
+        // V19's placed blade reaches about 239.4 local units from the centre.
+        private static const BLADE_RADIUS:Number=239.4;
         private static const blades:Object={};
 
         public static function gun(g:Graphics, type:Number, color:uint, blade:Boolean):void {
@@ -94,13 +98,14 @@ package {
                 image=makeBlade(color);
                 blades[color]=image;
             }
-            var length:Number=image.width/BLADE_SAMPLES;
-            var half:Number=BLADE_HALF_HEIGHT;
+            var scale:Number=BLADE_RADIUS*BLADE_SAMPLES/image.width;
+            var length:Number=BLADE_RADIUS;
+            var half:Number=BLADE_HALF_HEIGHT*scale;
             for (var x:int=-1;x<=1;x+=2) {
                 for (var y:int=-1;y<=1;y+=2) {
                     var dx:Number=x*Math.SQRT1_2, dy:Number=y*Math.SQRT1_2;
-                    var matrix:Matrix=new Matrix(dx/BLADE_SAMPLES,dy/BLADE_SAMPLES,
-                        -dy/BLADE_SAMPLES,dx/BLADE_SAMPLES,dy*half,-dx*half);
+                    var matrix:Matrix=new Matrix(dx*scale/BLADE_SAMPLES,dy*scale/BLADE_SAMPLES,
+                        -dy*scale/BLADE_SAMPLES,dx*scale/BLADE_SAMPLES,dy*half,-dx*half);
                     g.beginBitmapFill(image,matrix,false,true);
                     g.moveTo(dy*half,-dx*half);
                     g.lineTo(dx*length+dy*half,dy*length-dx*half);

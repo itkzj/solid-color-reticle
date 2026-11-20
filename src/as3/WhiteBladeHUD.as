@@ -11,6 +11,7 @@ package {
     import flash.text.TextFieldAutoSize;
     import flash.text.AntiAliasType;
     import flash.filters.GlowFilter;
+    import flash.utils.getTimer;
 
     // Shared by arcade, sniper and strategic; coordinates are relative to aim centre.
     public class WhiteBladeHUD extends Sprite {
@@ -20,6 +21,7 @@ package {
         private var charge:Sprite=new Sprite();
         private var core:Shape=new Shape();
         private var marks:Shape=new Shape();
+        private var arrows:Shape=new Shape();
         private var footprint:Shape=new Shape();
         private var fields:Object={};
         // Move each bar midpoint (230) inward by one quarter; retain both segment lengths.
@@ -28,21 +30,54 @@ package {
         public var data:Object={remaining:NaN,total:NaN,progress:NaN,reloadState:"",health:NaN,maxHealth:NaN,healthRatio:NaN,
             distance:"",zoom:"",ammo:NaN,capacity:1,loaded:NaN,burstSize:1,burstTime:NaN,
             penetration:NaN,shell:"",height:NaN,splash:0,splashPixels:NaN,splashRadiusX:NaN,splashRadiusY:NaN,splashRotation:NaN,splashX:0,splashY:0,flight:NaN,arty:false,
+            traverseLeft:NaN,traverseRight:NaN,traverseLeftRatio:NaN,traverseRightRatio:NaN,traverseRotation:0,
             centerType:0,centerOpacity:1,reloadOpacity:1,healthOpacity:1,clipOpacity:1,timeOpacity:1};
         private var previous:Object={};
+        private var motion:Object={};
         private function changed():Boolean {
             var dirty:Boolean=false;
             for(var key:String in data) {
                 var value:*=data[key], old:*=previous[key];
                 if(value===old || (value is Number && old is Number && isNaN(value) && isNaN(old)))continue;
                 previous[key]=value;
-                dirty=true;
+                if(key.indexOf("traverse")!=0 && key.indexOf("splash")!=0 && key!="progress")dirty=true;
+                if(key=="splash")dirty=true;
             }
             return dirty;
         }
+        // Sampled values stay in data. Each moving layer starts from its last drawn frame.
+        private function frame(id:String, target:Array, now:Number, duration:Number,
+                               snap:Boolean=false, turn:Number=0):Array {
+            var track:Object=motion[id];
+            if(!track || track.target.join() != target.join()) {
+                var start:Array=track?track.value.slice():[];
+                if(snap || start.length!=target.length)start=target;
+                if(id=="traverse" && start!=target) {
+                    if(target[0]==0)start[0]=0;
+                    if(target[1]==0)start[1]=0;
+                    if(target[2]==0)start[2]=0;
+                    if(target[3]==0)start[3]=0;
+                }
+                motion[id]=track={target:target,value:start,start:start,time:now,last:NaN};
+            }
+            if(track.last==now || (track.value===track.target && isFinite(track.last)))return null;
+            var t:Number=clamp((now-track.time)/duration);
+            track.last=now;
+            if(t==1 || track.start===track.target)track.value=track.target;
+            else {
+                var next:Array=[];
+                for(var i:int=0;i<target.length;i++) {
+                    var delta:Number=track.target[i]-track.start[i];
+                    if(turn && i==target.length-1)delta-=turn*Math.round(delta/turn);
+                    next.push(track.start[i]+delta*t);
+                }
+                track.value=next;
+            }
+            return track.value;
+        }
         public function WhiteBladeHUD(arty:Boolean=false) {
             super();mouseEnabled=false;mouseChildren=false;data.arty=arty;
-            addChild(footprint);addChild(rails);addChild(charge);addChild(marks);
+            addChild(footprint);addChild(rails);addChild(charge);addChild(marks);addChild(arrows);
             charge.addChild(core);
             // Explicit 1-unit backing on all geometry; no additional blurred outline.
             field("remaining",-RAIL_OUTER,-18,20,CYAN,"left");field("health",RAIL_OUTER,-18,20,WHITE,"right");
@@ -242,10 +277,65 @@ package {
                 g.beginFill(color,a);g.drawCircle(0,0,1);g.endFill();
             }
         }
+        private function traverseMarks(values:Array):void {
+            var g:Graphics=arrows.graphics;
+            g.clear();
+            if(!values.length)return;
+            var left:Number=values[0], right:Number=values[1];
+            var leftRatio:Number=values[2], rightRatio:Number=values[3];
+            arrows.rotation=values[4];
+            for(var pass:int=0;pass<2;pass++) {
+                g.lineStyle(pass?2:4,pass?healthColor(leftRatio):0x10181E,1,false,LineScaleMode.NORMAL,CapsStyle.ROUND,JointStyle.ROUND);
+                g.moveTo(left-8,-7);g.lineTo(left,0);g.lineTo(left-8,7);
+                g.lineStyle(pass?2:4,pass?healthColor(rightRatio):0x10181E,1,false,LineScaleMode.NORMAL,CapsStyle.ROUND,JointStyle.ROUND);
+                g.moveTo(right+8,-7);g.lineTo(right,0);g.lineTo(right+8,7);
+            }
+        }
         public function refresh():void {
-            if(!changed())return;
-            var hp:Number=hpRatio(),color:uint=healthColor(hp),p:Number=reloadCharge();
-            var scanning:Boolean=data.reloadState=="reloadingProgress"&&isFinite(data.progress);
+            var dirty:Boolean=changed();
+            if(dirty)refreshStatic();
+            var now:Number=getTimer();
+            var left:Number=data.traverseLeft, right:Number=data.traverseRight;
+            var lr:Number=data.traverseLeftRatio, rr:Number=data.traverseRightRatio;
+            var rotation:Number=data.arty?data.traverseRotation:0;
+            var valid:Boolean=isFinite(left)&&left<=0&&isFinite(right)&&right>=0&&isFinite(lr)&&isFinite(rr)&&isFinite(rotation);
+            var values:Array=frame("traverse",valid?[left,right,lr,rr,rotation]:[],now,100,false,360);
+            if(values)traverseMarks(values);
+
+            var p:Number=reloadCharge();
+            var scanning:Number=data.reloadState=="reloadingProgress"&&isFinite(data.progress)?1:0;
+            var reload:Object=motion.reload;
+            values=frame("reload",[p,scanning],now,90,!reload||!scanning||reload.target[1]!=scanning||p<reload.target[0]);
+            if(values || dirty)drawReload(values || motion.reload.value);
+
+            if(data.arty) {
+                var rx:Number=isFinite(data.splashRadiusX)?data.splashRadiusX:data.splashPixels;
+                var ry:Number=isFinite(data.splashRadiusY)?data.splashRadiusY:data.splashPixels;
+                var sx:Number=isFinite(data.splashX)?data.splashX:0;
+                var sy:Number=isFinite(data.splashY)?data.splashY:0;
+                var angle:Number=isFinite(data.splashRotation)?data.splashRotation:0;
+                var splash:Number=data.splash>0?data.splash:0;
+                var last:Object=motion.splash;
+                values=frame("splash",isFinite(rx)&&isFinite(ry)&&rx>0&&ry>0?[rx,ry,sx,sy,splash,angle]:[],
+                    now,100,last && last.target[4]!=splash,180);
+                if(values)drawFootprint(values);
+            }
+        }
+        private function drawReload(values:Array):void {
+            var p:Number=values[0], g:Graphics=core.graphics;
+            g.clear();
+            if(data.arty) {
+                if(p>0&&p<1)artyRail(g,-1,p,0x10181E,4.2,data.reloadOpacity);
+                artyRail(g,-1,p,CYAN,2.2,data.reloadOpacity);
+            } else if(values[1]) {
+                // Reload uses only the horizontal section; HP still uses the folded rail.
+                var x:Number=RAIL_OUTER-p*RAIL_HORIZONTAL;
+                shell(g,-x,0,CYAN,true,1,-1);
+                shell(g,x,0,CYAN,true,1,1);
+            }
+        }
+        private function refreshStatic():void {
+            var hp:Number=hpRatio(),color:uint=healthColor(hp);
             put("remaining",ready()?(data.readyText||"Ready"):number(data.remaining,2," s"));
             var fullReload:String=number(data.total,2,"s");
             if(data.capacity>1)fullReload+="/"+number(data.burstTime,2,"s");
@@ -256,12 +346,10 @@ package {
             put("flight",data.arty?number(data.flight,2," s"):"");
             put("ammo",number(data.ammo));put("penetration",(data.shell?data.shell:"—")+" / "+number(data.penetration,0," mm"));
             put("splash",data.arty&&data.splash>0?number(data.splash,1," m"):"");
-            var sx:Number=isFinite(data.splashX)?data.splashX:0;
-            var sy:Number=isFinite(data.splashY)?data.splashY:0;
             fields.remaining.alpha=fields.total.alpha=clamp(data.timeOpacity);
             fields.health.alpha=clamp(data.healthOpacity);
-            rails.graphics.clear();core.graphics.clear();
-            charge.alpha=clamp(data.healthOpacity)*clamp(data.reloadOpacity);
+            rails.graphics.clear();
+            charge.alpha=data.arty?1:clamp(data.healthOpacity)*clamp(data.reloadOpacity);
 
             if(data.arty) {
                 mirrorField(fields.remaining,fields.total);
@@ -271,20 +359,15 @@ package {
                 fields.ammo.y=clipCenterY()+30-2-fields.ammo.textHeight/2;
                 artyRail(rails.graphics,-1,1,0x10181E,4.2,data.reloadOpacity);
                 artyRail(rails.graphics,-1,1,WHITE,2.2,data.reloadOpacity);
-                artyRail(rails.graphics,-1,p,CYAN,2.2,data.reloadOpacity);
                 artyRail(rails.graphics,1,1,0x10181E,4.2,data.healthOpacity);
                 artyRail(rails.graphics,1,1,WHITE,2.2,data.healthOpacity);
+                if(hp>0&&hp<1)artyRail(rails.graphics,1,hp,0x10181E,4.2,data.healthOpacity);
                 artyRail(rails.graphics,1,hp,color,2.2,data.healthOpacity);
             } else for(var side:int=-1;side<=1;side+=2) {
-                // One continuous backing, so the HP split cannot cut its outline.
                 rail(rails.graphics,side,0,1,0x10181E,4.2,data.healthOpacity);
                 rail(rails.graphics,side,hp,1,0xFFFFFF,2.2,data.healthOpacity);
+                if(hp>0&&hp<1)rail(rails.graphics,side,0,hp,0x10181E,4.2,data.healthOpacity);
                 rail(rails.graphics,side,0,hp,color,2.2,data.healthOpacity);
-                if(scanning) {
-                    // Reload uses only the horizontal section; HP still uses the folded rail.
-                    var hx:Number=side*(RAIL_OUTER-p*RAIL_HORIZONTAL);
-                    shell(core.graphics,hx,0,CYAN,true,1,side);
-                }
             }
             // Native vectors only; no scan blur or full-HUD bitmap.
             marks.graphics.clear();center();
@@ -293,13 +376,15 @@ package {
             // ponytail: up to 10 groups use shell icons; larger magazines retain the native cassette.
             var iconY:Number=clipCenterY()+(data.arty?.5:0); // outline spans -9.5 to +8.5 around the origin
             if(count<=10)for(var i:int=0;i<count;i++)shell(marks.graphics,(i-(count-1)/2)*15,iconY,CYAN,i<loaded,data.clipOpacity);
+        }
+        private function drawFootprint(values:Array):void {
             footprint.graphics.clear();
-            var rx:Number=isFinite(data.splashRadiusX)?data.splashRadiusX:data.splashPixels;
-            var ry:Number=isFinite(data.splashRadiusY)?data.splashRadiusY:data.splashPixels;
-            var rotation:Number=isFinite(data.splashRotation)?data.splashRotation:0;
+            var sx:Number=values.length?values[2]:0, sy:Number=values.length?values[3]:0;
+            var rotation:Number=values.length?values[5]:0;
             footprint.x=sx;footprint.y=sy;footprint.rotation=rotation;
             fields.splash.x=sx-fields.splash.width/2;fields.splash.y=sy+80;
-            if(data.arty&&isFinite(rx)&&isFinite(ry)&&rx>0&&ry>0) {
+            if(values.length) {
+                var rx:Number=values[0], ry:Number=values[1];
                 var angle:Number=rotation*Math.PI/180;
                 var verticalX:Number=rx*Math.sin(angle),verticalY:Number=ry*Math.cos(angle);
                 fields.splash.y=sy+Math.sqrt(verticalX*verticalX+verticalY*verticalY)+10;

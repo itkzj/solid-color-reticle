@@ -62,7 +62,7 @@ METHODS='''
         override public function setZoom(v:String):void {super.setZoom(v);var n:Array=v?v.match(/[0-9]+(?:[.,][0-9]+)?/):null;hud().data.zoom=n?"\u00d7"+n[0]:"";clean();}
         override public function setClipsParam(capacity:Number,burst:Number,type:int):void {super.setClipsParam(capacity,burst,type);hud().data.capacity=Math.max(1,capacity);hud().data.burstSize=Math.max(1,burst);clean();}
         override public function setAmmoStock(total:uint,loaded:Number,state:String,reloaded:Boolean=false):void {super.setAmmoStock(total,loaded,state,reloaded);hud().setStock(total,loaded);clean();}
-        private const numberFields:Array=["health","maxHealth","burstTime","height","splashPixels","splashRadiusX","splashRadiusY","splashRotation","splashX","splashY","flight","penetration","splash"];
+        private const numberFields:Array=["health","maxHealth","burstTime","height","splashPixels","splashRadiusX","splashRadiusY","splashRotation","splashX","splashY","flight","penetration","splash","traverseLeft","traverseRight","traverseLeftRatio","traverseRightRatio","traverseRotation"];
         public function as_whiteBladeData(value:Object):Boolean {
             if(!value)return false;
             var h:WhiteBladeHUD=hud();

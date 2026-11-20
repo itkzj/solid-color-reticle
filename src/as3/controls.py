@@ -29,28 +29,47 @@ def stub(name):
 RING = '''
     private var ink:Shape;
     private var progress:Number=0;
+    private var startProgress:Number=0;
+    private var startTime:Number=0;
     private var bold:Boolean=false;
     private var drawn:Number=NaN;
     private var drawnBold:Boolean;
 
     override public function setReloadingAsPercent(value:Number, force:Boolean=false):void {
-        if (PROGRESS && isFinite(value)) progress=Math.max(0,Math.min(1,value));
-        paint();
+        if (!PROGRESS || !isFinite(value)) return;
+        var next:Number=Math.max(0,Math.min(1,value));
+        if (force || next<progress) {
+            snap(next);
+        } else if (next!=progress) {
+            startProgress=isFinite(drawn)?drawn:progress;
+            startTime=getTimer();
+            progress=next;
+            addEventListener(Event.ENTER_FRAME,onFrame);
+        }
     }
     override public function setReloadingState(state:String):void {
         var ready:Boolean=state=="reloadingEnded" || state=="reloadingEnd";
-        if (!PROGRESS || ready) progress=ready?1:0;
-        paint();
+        if (!PROGRESS || state!="reloadingProgress") snap(ready?1:0);
     }
     override public function setThickness(value:String):void {
         bold=value=="bold";
-        paint();
+        paint(isFinite(drawn)?drawn:progress);
     }
-    private function paint():void {
-        if (!ink || (drawn==progress && drawnBold==bold)) return;
-        drawn=progress;
+    private function snap(value:Number):void {
+        progress=value;
+        removeEventListener(Event.ENTER_FRAME,onFrame);
+        paint(value);
+    }
+    private function onFrame(event:Event):void {
+        var t:Number=Math.max(0,Math.min(1,(getTimer()-startTime)/90));
+        if (t==1) snap(progress);
+        else paint(startProgress+(progress-startProgress)*t);
+    }
+    private function paint(value:Number=0):void {
+        if (!ink || (drawn==value && drawnBold==bold)) return;
+        drawn=value;
         drawnBold=bold;
-        SolidReticleArt.ring(ink.graphics,progress,SOLID,bold);
+        SolidReticleArt.ring(ink.graphics,value,SOLID,bold);
     }
 '''
 
@@ -131,6 +150,7 @@ def render(name):
         init = ('for (var i:int=0;i<numChildren;i++) getChildAt(i).visible=false; '
                 'stop(); ink=new Shape(); addChild(ink); '
                 + ('ink.rotation=90; ' if solid else '') + 'paint();')
-    return ('package { import flash.display.MovieClip; import flash.display.Shape; public class '
+    return ('package { import flash.display.MovieClip; import flash.display.Shape; '
+            'import flash.events.Event; import flash.utils.getTimer; public class '
             + name + ' extends ' + base(name) + ' { public function ' + name + '() { super();'
             + init + '}\n' + methods + '\n}}\n')
