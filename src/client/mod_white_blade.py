@@ -54,6 +54,121 @@ def _ready_text():
     return 'Ready'
 
 
+def _minimum_angle(player):
+    # The native dispersion calculation uses this multiplier even at rest.
+    descriptor = player._PlayerAvatar__getDetailedVehicleDescriptor()
+    multiplier = player._PlayerAvatar__dispersionInfo[0]
+    return _number(descriptor.gun.shotDispersionAngle * multiplier)
+
+
+def _minimum_diameter(player, marker):
+    angle = _minimum_angle(player)
+    current = _number(player.gunRotator.getCurShotDispersionAngles()[0])
+    size = _number(marker.size)
+    if angle > 0 and current > 0 and size > 0:
+        # The native marker is 2 * distance * current angle. Keep its distance,
+        # including when a collision or max range has shortened the shot.
+        return angle, size * angle / current
+    return _NAN, _NAN
+
+
+def _install_minimum_markers():
+    import Math
+    from AvatarInputHandler import gun_marker_ctrl as ctrl
+    from gui.Scaleform.daapi.view.battle.shared.crosshair import gm_components
+    from gui.Scaleform.daapi.view.battle.shared.crosshair.gm_factory import _VIEW_ID
+
+    collection = gm_components.GunMarkersComponents
+    default = ctrl._DefaultGunMarkerController
+    spg = ctrl._SPGGunMarkerController
+    make = ctrl._GunMarkersDPFactory
+    original_collection = collection.__init__
+    original_default = default.update
+    original_spg = spg.update
+    primary = (ctrl._MARKER_TYPE.CLIENT, ctrl._MARKER_TYPE.SERVER)
+    reference_type = object()  # Do not participate in native marker-type lookup.
+
+    def create_collection(self, components):
+        state = _active
+        if state is None:
+            return original_collection(self, components)
+        markers = tuple(components)
+        providers, extra, seen = {}, [], set()
+        try:
+            for source in markers:
+                view = source.getViewID()
+                if view in seen or view not in (_VIEW_ID.ARCADE, _VIEW_ID.SNIPER, _VIEW_ID.STRATEGIC):
+                    continue
+                if source.getMarkerType() not in primary:
+                    continue
+                strategic = view == _VIEW_ID.STRATEGIC
+                linkage = 'GunMarkerSPGUI' if strategic else 'GunMarkerUI'
+                # The strategic view can also contain a separate artillery hit marker.
+                if strategic and source.getViewSettings().linkage != linkage:
+                    continue
+                native = source._dataProvider
+                if native is None:
+                    continue
+                key = id(native)
+                if key not in providers:
+                    provider = make._makeSPGProvider() if strategic else make._makeDefaultProvider()
+                    provider.positionMatrixProvider = native.positionMatrixProvider
+                    providers[key] = (native, provider)
+                marker_class = gm_components.SPGGunMarkerComponent if strategic else gm_components.DefaultGunMarkerComponent
+                extra.append(marker_class(reference_type, view, 'solidReticleMinimum' + source.getName(),
+                                          linkage, providers[key][1], source.isActive()))
+                seen.add(view)
+        except Exception:
+            _log('minimum marker setup')
+            return original_collection(self, markers)
+        result = original_collection(self, markers + tuple(extra))
+        if extra:
+            state.minimum_providers = providers
+        return result
+
+    def reference(controller):
+        if _active is not None:
+            pair = _active.minimum_providers.get(id(controller._dataProvider))
+            if pair is not None:
+                return pair[1]
+        return None
+
+    def update_default(self, markerType, gunMarkerInfo, supportMarkersInfo=None, relaxTime=-1.0):
+        result = original_default(self, markerType, gunMarkerInfo, supportMarkersInfo, relaxTime)
+        provider = reference(self)
+        if provider is not None:
+            try:
+                _, diameter = _minimum_diameter(BigWorld.player(), gunMarkerInfo)
+                if diameter > 0:
+                    position = Math.createTranslationMatrix(gunMarkerInfo.position)
+                    position = BigWorld.checkAndRecalculateIfPositionInExtremeProjection(position)
+                    world = ctrl._makeWorldMatrix(position)
+                    pixels = BigWorld.markerHelperScale(world, diameter) * self._DefaultGunMarkerController__screenRatio
+                    provider.sizeConstraint = self._dataProvider.sizeConstraint
+                    provider.updateSizes(pixels, 0.0, relaxTime, 0.0)
+            except Exception:
+                _log('minimum marker projection')
+        return result
+
+    def update_spg(self, markerType, gunMarkerInfo, supportMarkersInfo, relaxTime):
+        result = original_spg(self, markerType, gunMarkerInfo, supportMarkersInfo, relaxTime)
+        provider = reference(self)
+        if provider is not None:
+            try:
+                angle, diameter = _minimum_diameter(BigWorld.player(), gunMarkerInfo)
+                if diameter > 0:
+                    provider.setupConicDispersion(angle)
+                    position, velocity, gravity = self._getCurrentShotInfo()
+                    provider.update(position, velocity, gravity, diameter)
+            except Exception:
+                _log('minimum strategic marker projection')
+        return result
+
+    collection.__init__ = create_collection
+    default.update = update_default
+    spg.update = update_spg
+
+
 class _Bridge(object):
     def __init__(self, panel):
         self.panel = panel
@@ -68,6 +183,7 @@ class _Bridge(object):
         self.ready_text = _ready_text()
         self.marker_names = set()
         self.marker_targets = {}
+        self.minimum_providers = {}
         self.auto_aim_id = None
         self.target_events = []
         self.target_bus = None
@@ -422,6 +538,10 @@ def init():
     CrosshairPanelContainer._dispose = dispose
     CrosshairPanelContainerMeta.as_setShotFlyTimesS = flights
     CrosshairPanelContainerMeta.as_setGunMarkerColorS = marker_color
+    try:
+        _install_minimum_markers()
+    except Exception:
+        _log('install minimum markers')
     _installed = True
 
 

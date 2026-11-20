@@ -9,6 +9,7 @@ LINKAGES = {
     'radiusTtypestapper': (20, 'GunMarkerMixingWithoutProgress'),
     'continiusLine': (21, 'GunMarkerMixingSolid'),
     'GunMarkerTagUI': (151, 'GunMarkerTag'),
+    'GunMarkerUI': (468, 'GunMarker'),
     'GunMarkerSPGUI': (475, 'GunMarkerStrategic'),
     'GunMarkerSPGDebugUI': (476, 'GunMarkerDebugStrategic'),
     'ArtyHitMarkerUI': (990, 'GunMarkerArtillery'),
@@ -83,6 +84,17 @@ GUN = '''
     }
 '''
 
+MINIMUM = '''
+    override public function setScale(value:Number):void {
+        super.setScale(value);
+        if (name.indexOf("solidReticleMinimum")==0) {
+            gunTag.visible=false;
+            aimDamage.visible=false;
+        }
+    }
+'''
+
+
 POINTS = '''
     private var drawn:uint;
     override protected function setCurrentReloading(value:Number):void {
@@ -107,6 +119,9 @@ def render(name):
     if name == 'GunMarkerTagUI':
         methods = GUN
         init = 'ink=new Shape(); addChild(ink);'
+    elif name == 'GunMarkerUI':
+        methods = MINIMUM
+        init = ''
     elif name in ('GunMarkerSPGUI', 'GunMarkerSPGDebugUI', 'ArtyHitMarkerUI'):
         methods = POINTS.replace('IMPACT', str(name == 'ArtyHitMarkerUI').lower())
         init = 'paint(' + str(name == 'ArtyHitMarkerUI').lower() + ');'
