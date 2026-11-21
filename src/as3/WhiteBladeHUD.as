@@ -29,19 +29,28 @@ package {
         private const RAIL_LENGTH:Number=538/3;
         public var data:Object={remaining:NaN,total:NaN,progress:NaN,reloadState:"",health:NaN,maxHealth:NaN,healthRatio:NaN,
             distance:"",zoom:"",ammo:NaN,capacity:1,loaded:NaN,burstSize:1,burstTime:NaN,
-            penetration:NaN,shell:"",height:NaN,splash:0,splashPixels:NaN,splashRadiusX:NaN,splashRadiusY:NaN,splashRotation:NaN,splashX:0,splashY:0,flight:NaN,arty:false,
+            aimArmor:NaN,aimChance:NaN,aimColor:NaN,
+            penetration:NaN,shell:"",height:NaN,splash:0,splashRadiusX:NaN,splashRadiusY:NaN,splashRotation:NaN,splashX:0,splashY:0,flight:NaN,arty:false,
             traverseLeft:NaN,traverseRight:NaN,traverseLeftRatio:NaN,traverseRightRatio:NaN,traverseRotation:0,
             centerType:0,centerOpacity:1,reloadOpacity:1,healthOpacity:1,clipOpacity:1,timeOpacity:1};
         private var previous:Object={};
         private var motion:Object={};
-        private function changed():Boolean {
-            var dirty:Boolean=false;
+        private var railState:Array;
+        private var markState:Array;
+        private var drawnReloadOpacity:Number=NaN;
+        private function sameNumbers(a:Array,b:Array):Boolean {
+            if(!a || a.length!=b.length)return false;
+            for(var i:int=0;i<b.length;i++)if(a[i]!==b[i])return false;
+            return true;
+        }
+        private function changed():Object {
+            var dirty:Object=null;
             for(var key:String in data) {
                 var value:*=data[key], old:*=previous[key];
                 if(value===old || (value is Number && old is Number && isNaN(value) && isNaN(old)))continue;
                 previous[key]=value;
-                if(key.indexOf("traverse")!=0 && key.indexOf("splash")!=0 && key!="progress")dirty=true;
-                if(key=="splash")dirty=true;
+                if(!dirty)dirty={};
+                dirty[key]=true;
             }
             return dirty;
         }
@@ -49,7 +58,7 @@ package {
         private function frame(id:String, target:Array, now:Number, duration:Number,
                                snap:Boolean=false, turn:Number=0):Array {
             var track:Object=motion[id];
-            if(!track || track.target.join() != target.join()) {
+            if(!track || !sameNumbers(track.target,target)) {
                 var start:Array=track?track.value.slice():[];
                 if(snap || start.length!=target.length)start=target;
                 if(id=="traverse" && start!=target) {
@@ -82,9 +91,14 @@ package {
             // Explicit 1-unit backing on all geometry; no additional blurred outline.
             field("remaining",-RAIL_OUTER,-18,20,CYAN,"left");field("health",RAIL_OUTER,-18,20,WHITE,"right");
             field("total",-RAIL_OUTER,14,14,MUTED,"left");field("penetration",RAIL_OUTER,14,14,MUTED,"right");
-            field("distance",0,-185,20,WHITE);field("zoom",0,-153,14,MUTED);
-            field("height",0,-122,14,MUTED);field("flight",0,-91,14,MUTED);
+            var distanceSize:Number=20;
+            field("distance",0,-185,distanceSize,WHITE);field("zoom",0,-153,14,MUTED);
+            field("height",0,-122,14,MUTED);field("flight",0,-91,arty?distanceSize:14,MUTED);
             field("ammo",0,176,20,WHITE);field("splash",0,80,14,arty?ORANGE:AMBER);
+            if(!arty) {
+                field("aimArmor",0,185,20,WHITE);
+                fields.aimArmor.visible=false;
+            }
             if(arty) {
                 for each(var id:String in ["remaining","health","total","penetration"]) {
                     var format:TextFormat=fields[id].defaultTextFormat;format.align="center";fields[id].defaultTextFormat=format;
@@ -110,10 +124,17 @@ package {
             // TextField adds a 2px gutter on each side of its text.
             bottom.y=-top.y-4-(top.textHeight+bottom.textHeight)/2;
         }
+        private function mirroredCenterY(top:TextField,fallback:TextField):Number {
+            // Reserve the row using a same-size label when the game clears the readout.
+            var height:Number=top.text?top.textHeight:fallback.textHeight;
+            return -top.y-2-height/2;
+        }
+        private function aimCenterY():Number {
+            return mirroredCenterY(fields.distance,fields.health);
+        }
         public function clipCenterY():Number {
-            if(!data.arty)return 115;
-            var height:Number=fields.distance.text?fields.distance.textHeight:fields.health.textHeight;
-            return -fields.distance.y-2-height/2;
+            if(!data.arty)return mirroredCenterY(fields.zoom,fields.total);
+            return aimCenterY();
         }
         private function number(v:Number,digits:int=0,unit:String=""):String {
             return isFinite(v)&&v>=0?v.toFixed(digits)+unit:"—";
@@ -292,8 +313,16 @@ package {
             }
         }
         public function refresh():void {
-            var dirty:Boolean=changed();
-            if(dirty)refreshStatic();
+            var dirty:Object=changed();
+            if(dirty) {
+                refreshText(dirty);
+                if(dirty.arty || dirty.health || dirty.maxHealth || dirty.healthRatio || dirty.healthOpacity ||
+                   dirty.reloadOpacity || dirty.centerType || dirty.centerOpacity || dirty.clipOpacity ||
+                   dirty.distance || dirty.zoom || dirty.total || dirty.burstTime || dirty.capacity ||
+                   dirty.burstSize || dirty.loaded || (data.arty && (dirty.reloadState || dirty.ammo))) {
+                    refreshGraphics();
+                }
+            }
             var now:Number=getTimer();
             var left:Number=data.traverseLeft, right:Number=data.traverseRight;
             var lr:Number=data.traverseLeftRatio, rr:Number=data.traverseRightRatio;
@@ -306,11 +335,14 @@ package {
             var scanning:Number=data.reloadState=="reloadingProgress"&&isFinite(data.progress)?1:0;
             var reload:Object=motion.reload;
             values=frame("reload",[p,scanning],now,90,!reload||!scanning||reload.target[1]!=scanning||p<reload.target[0]);
-            if(values || dirty)drawReload(values || motion.reload.value);
+            var reloadOpacity:Number=clamp(data.reloadOpacity);
+            if(values || (data.arty && drawnReloadOpacity!=reloadOpacity)) {
+                drawnReloadOpacity=reloadOpacity;
+                drawReload(values || motion.reload.value);
+            }
 
             if(data.arty) {
-                var rx:Number=isFinite(data.splashRadiusX)?data.splashRadiusX:data.splashPixels;
-                var ry:Number=isFinite(data.splashRadiusY)?data.splashRadiusY:data.splashPixels;
+                var rx:Number=data.splashRadiusX, ry:Number=data.splashRadiusY;
                 var sx:Number=isFinite(data.splashX)?data.splashX:0;
                 var sy:Number=isFinite(data.splashY)?data.splashY:0;
                 var angle:Number=isFinite(data.splashRotation)?data.splashRotation:0;
@@ -325,8 +357,8 @@ package {
             var p:Number=values[0], g:Graphics=core.graphics;
             g.clear();
             if(data.arty) {
-                if(p>0&&p<1)artyRail(g,-1,p,0x10181E,4.2,data.reloadOpacity);
-                artyRail(g,-1,p,CYAN,2.2,data.reloadOpacity);
+                if(p>0&&p<1)artyRail(g,-1,p,0x10181E,4.2,drawnReloadOpacity);
+                artyRail(g,-1,p,CYAN,2.2,drawnReloadOpacity);
             } else if(values[1]) {
                 // Reload uses only the horizontal section; HP still uses the folded rail.
                 var x:Number=RAIL_OUTER-p*RAIL_HORIZONTAL;
@@ -334,48 +366,102 @@ package {
                 shell(g,x,0,CYAN,true,1,1);
             }
         }
-        private function refreshStatic():void {
-            var hp:Number=hpRatio(),color:uint=healthColor(hp);
-            put("remaining",ready()?(data.readyText||"Ready"):number(data.remaining,2," s"));
-            var fullReload:String=number(data.total,2,"s");
-            if(data.capacity>1)fullReload+="/"+number(data.burstTime,2,"s");
-            put("total",fullReload);
-            put("health",number(data.health));fields.health.textColor=color;
-            put("distance",data.distance);put("zoom",data.zoom);
-            put("height",data.arty?number(data.height,0," m"):"");
-            put("flight",data.arty?number(data.flight,2," s"):"");
-            put("ammo",number(data.ammo));put("penetration",(data.shell?data.shell:"—")+" / "+number(data.penetration,0," mm"));
-            put("splash",data.arty&&data.splash>0?number(data.splash,1," m"):"");
-            fields.remaining.alpha=fields.total.alpha=clamp(data.timeOpacity);
-            fields.health.alpha=clamp(data.healthOpacity);
-            rails.graphics.clear();
-            charge.alpha=data.arty?1:clamp(data.healthOpacity)*clamp(data.reloadOpacity);
-
-            if(data.arty) {
-                mirrorField(fields.remaining,fields.total);
-                mirrorField(fields.health,fields.penetration);
-                mirrorField(fields.height,fields.flight);
-                // Leave the next row for the ammo count, below the mirrored clip icons.
-                fields.ammo.y=clipCenterY()+30-2-fields.ammo.textHeight/2;
-                artyRail(rails.graphics,-1,1,0x10181E,4.2,data.reloadOpacity);
-                artyRail(rails.graphics,-1,1,WHITE,2.2,data.reloadOpacity);
-                artyRail(rails.graphics,1,1,0x10181E,4.2,data.healthOpacity);
-                artyRail(rails.graphics,1,1,WHITE,2.2,data.healthOpacity);
-                if(hp>0&&hp<1)artyRail(rails.graphics,1,hp,0x10181E,4.2,data.healthOpacity);
-                artyRail(rails.graphics,1,hp,color,2.2,data.healthOpacity);
-            } else for(var side:int=-1;side<=1;side+=2) {
-                rail(rails.graphics,side,0,1,0x10181E,4.2,data.healthOpacity);
-                rail(rails.graphics,side,hp,1,0xFFFFFF,2.2,data.healthOpacity);
-                if(hp>0&&hp<1)rail(rails.graphics,side,0,hp,0x10181E,4.2,data.healthOpacity);
-                rail(rails.graphics,side,0,hp,color,2.2,data.healthOpacity);
+        public function setAim(armor:Number,chance:Number,color:Number):void {
+            if(data.arty)return;
+            data.aimArmor=previous.aimArmor=armor;
+            data.aimChance=previous.aimChance=chance;
+            data.aimColor=previous.aimColor=color;
+            refreshAim();
+        }
+        private function refreshAim():void {
+            var chance:Number=data.aimChance;
+            var show:Boolean=isFinite(data.aimArmor) && isFinite(data.aimColor) &&
+                (chance==-1 || (chance>=0 && chance<=100));
+            fields.aimArmor.visible=show;
+            put("aimArmor",show?number(data.aimArmor,0," mm")+" / "+
+                (chance==-1?"\u8df3\u5f39":chance.toFixed(0)+"%") : "");
+            if(show) {
+                fields.aimArmor.textColor=uint(data.aimColor);
+                centerTextAt(fields.aimArmor,aimCenterY());
             }
-            // Native vectors only; no scan blur or full-HUD bitmap.
-            marks.graphics.clear();center();
+        }
+        private function centerTextAt(label:TextField,y:Number):void {
+            label.y=y-2-label.textHeight/2;
+        }
+        private function refreshText(dirty:Object):void {
+            var remaining:Boolean=dirty.remaining || dirty.reloadState || dirty.readyText || dirty.ammo;
+            var total:Boolean=dirty.total || dirty.capacity || dirty.burstTime;
+            var penetration:Boolean=dirty.shell || dirty.penetration;
+            if(remaining)put("remaining",ready()?(data.readyText||"Ready"):number(data.remaining,2," s"));
+            if(total) {
+                var fullReload:String=number(data.total,2,"s");
+                if(data.capacity>1)fullReload+="/"+number(data.burstTime,2,"s");
+                put("total",fullReload);
+            }
+            if(dirty.health)put("health",number(data.health));
+            if(dirty.health || dirty.maxHealth || dirty.healthRatio)fields.health.textColor=healthColor(hpRatio());
+            if(dirty.distance)put("distance",data.distance);
+            if(dirty.zoom)put("zoom",data.zoom);
+            if(dirty.ammo)put("ammo",number(data.ammo));
+            if(penetration)put("penetration",(data.shell?data.shell:"—")+" / "+number(data.penetration,0," mm"));
+            if(dirty.timeOpacity)fields.remaining.alpha=fields.total.alpha=clamp(data.timeOpacity);
+            if(dirty.healthOpacity)fields.health.alpha=clamp(data.healthOpacity);
+            if(dirty.arty || dirty.height)put("height",data.arty?number(data.height,0," m"):"");
+            if(dirty.arty || dirty.flight)put("flight",data.arty?number(data.flight,2," s"):"");
+            if(dirty.arty || dirty.splash)put("splash",data.arty&&data.splash>0?number(data.splash,1," m"):"");
+            if(data.arty) {
+                if(dirty.arty || remaining || total)mirrorField(fields.remaining,fields.total);
+                if(dirty.arty || dirty.health || penetration)mirrorField(fields.health,fields.penetration);
+                if(dirty.arty || dirty.height || dirty.flight)mirrorField(fields.height,fields.flight);
+                if(dirty.arty || dirty.distance || dirty.health || dirty.ammo)centerTextAt(fields.ammo,clipCenterY()+30);
+            } else {
+                if(dirty.aimArmor || dirty.aimChance || dirty.aimColor)refreshAim();
+                else if(dirty.arty || dirty.distance || dirty.health)centerTextAt(fields.aimArmor,aimCenterY());
+                if(dirty.arty || dirty.distance || dirty.health || dirty.zoom || total || dirty.ammo)
+                    centerTextAt(fields.ammo,2*aimCenterY()-clipCenterY());
+            }
+        }
+        private function refreshGraphics():void {
+            var hp:Number=hpRatio();
+            var healthOpacity:Number=clamp(data.healthOpacity), reloadOpacity:Number=clamp(data.reloadOpacity);
+            charge.alpha=data.arty?1:healthOpacity*reloadOpacity;
+            var nextRails:Array=data.arty?[hp,healthOpacity,reloadOpacity]:[hp,healthOpacity];
+            if(!sameNumbers(railState,nextRails)) {
+                railState=nextRails;
+                drawRails(hp,healthOpacity,reloadOpacity);
+            }
+
             var count:int=clipGroups();
             var loaded:int=isFinite(data.loaded)?Math.max(0,Math.floor(data.loaded/Math.max(1,data.burstSize))):0;
-            // ponytail: up to 10 groups use shell icons; larger magazines retain the native cassette.
-            var iconY:Number=clipCenterY()+(data.arty?.5:0); // outline spans -9.5 to +8.5 around the origin
-            if(count<=10)for(var i:int=0;i<count;i++)shell(marks.graphics,(i-(count-1)/2)*15,iconY,CYAN,i<loaded,data.clipOpacity);
+            var iconY:Number=clipCenterY()+.5; // outline spans -9.5 to +8.5 around the origin
+            var clipOpacity:Number=clamp(data.clipOpacity);
+            var nextMarks:Array=data.arty?[ready()?1:0]:[isFinite(data.centerType)?data.centerType:-1,clamp(data.centerOpacity)];
+            if(count>0 && count<=10)nextMarks.push(count,loaded,iconY,clipOpacity);
+            if(!sameNumbers(markState,nextMarks)) {
+                markState=nextMarks;
+                marks.graphics.clear();center();
+                // ponytail: up to 10 groups use shell icons; larger magazines retain the native cassette.
+                if(count<=10)for(var i:int=0;i<count;i++)shell(marks.graphics,(i-(count-1)/2)*15,iconY,CYAN,i<loaded,clipOpacity);
+            }
+        }
+        private function drawRails(hp:Number,healthOpacity:Number,reloadOpacity:Number):void {
+            var g:Graphics=rails.graphics, color:uint=healthColor(hp);
+            g.clear();
+            if(data.arty) {
+                artyRail(g,-1,1,0x10181E,4.2,reloadOpacity);
+                artyRail(g,-1,1,WHITE,2.2,reloadOpacity);
+                artyRail(g,1,1,0x10181E,4.2,healthOpacity);
+                artyRail(g,1,1,WHITE,2.2,healthOpacity);
+                if(hp>0&&hp<1)artyRail(g,1,hp,0x10181E,4.2,healthOpacity);
+                artyRail(g,1,hp,color,2.2,healthOpacity);
+            } else {
+                for(var side:int=-1;side<=1;side+=2) {
+                    rail(g,side,0,1,0x10181E,4.2,healthOpacity);
+                    rail(g,side,hp,1,0xFFFFFF,2.2,healthOpacity);
+                    if(hp>0&&hp<1)rail(g,side,0,hp,0x10181E,4.2,healthOpacity);
+                    rail(g,side,0,hp,color,2.2,healthOpacity);
+                }
+            }
         }
         private function drawFootprint(values:Array):void {
             footprint.graphics.clear();

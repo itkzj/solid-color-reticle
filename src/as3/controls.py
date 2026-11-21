@@ -32,6 +32,7 @@ RING = '''
     private var startProgress:Number=0;
     private var startTime:Number=0;
     private var bold:Boolean=false;
+    private var current:Number=NaN;
     private var drawn:Number=NaN;
     private var drawnBold:Boolean;
 
@@ -41,7 +42,7 @@ RING = '''
         if (force || next<progress) {
             snap(next);
         } else if (next!=progress) {
-            startProgress=isFinite(drawn)?drawn:progress;
+            startProgress=isFinite(current)?current:progress;
             startTime=getTimer();
             progress=next;
             addEventListener(Event.ENTER_FRAME,onFrame);
@@ -53,7 +54,7 @@ RING = '''
     }
     override public function setThickness(value:String):void {
         bold=value=="bold";
-        paint(isFinite(drawn)?drawn:progress);
+        paint(isFinite(current)?current:progress);
     }
     private function snap(value:Number):void {
         progress=value;
@@ -66,8 +67,11 @@ RING = '''
         else paint(startProgress+(progress-startProgress)*t);
     }
     private function paint(value:Number=0):void {
-        if (!ink || (drawn==value && drawnBold==bold)) return;
-        drawn=value;
+        if (!ink) return;
+        current=value;
+        var key:Number=SolidReticleArt.ringProgress(value,SOLID);
+        if (drawn==key && drawnBold==bold) return;
+        drawn=key;
         drawnBold=bold;
         SolidReticleArt.ring(ink.graphics,value,SOLID,bold);
     }
@@ -75,6 +79,10 @@ RING = '''
 
 GUN = '''
     private var ink:Shape;
+    private var blade:Shape;
+    private var drawnKind:Number=NaN;
+    private var drawnColor:uint;
+    private var bladeColor:Number=NaN;
     private var kind:Number=-1;
     private var state:String="normal";
     private var ready:Boolean=false;
@@ -85,9 +93,14 @@ GUN = '''
         kind=value;
         super.setType(value);
     }
+    private var aimColor:Number=NaN;
     override public function setColor(value:String):void {
+        if (state==value) return;
         state=value;
-        super.setColor(value);
+        aimColor=/^wb[0-9a-f]{6}$/.test(value)?parseInt(value.substr(2),16):NaN;
+        // Only native color names are Timeline labels.
+        super.setColor(isNaN(aimColor)?value:"normal");
+        invalidate();
     }
     override public function setReloadingState(value:String):void {
         ready=value=="reloadingEnded" || value=="reloadingEnd";
@@ -97,9 +110,21 @@ GUN = '''
         super.draw();
         if (!ink) return;
         if (tag) tag.visible=false;
-        var result:Boolean=kind%3==0 && colors.hasOwnProperty(state);
-        var color:uint=result?uint(colors[state]):kind%3==1?(ready?0xC3FF68:0xF02311):SolidReticleArt.WHITE;
-        SolidReticleArt.gun(ink.graphics,kind,color,result);
+        var hasAim:Boolean=!isNaN(aimColor);
+        var result:Boolean=kind%3==0 && (hasAim || colors.hasOwnProperty(state));
+        var color:uint=result?(hasAim?uint(aimColor):uint(colors[state])):kind%3==1?(ready?0xC3FF68:0xF02311):SolidReticleArt.WHITE;
+        if (blade.visible!=result) blade.visible=result;
+        if (result && bladeColor!=color) {
+            bladeColor=color;
+            var red:uint=(color>>16)&255, green:uint=(color>>8)&255, blue:uint=color&255;
+            blade.transform.colorTransform=new ColorTransform((255-red)/255,(240-green)/255,
+                (186-blue)/255,1,red,green,blue);
+        }
+        if (drawnKind!=kind || drawnColor!=color) {
+            drawnKind=kind;
+            drawnColor=color;
+            SolidReticleArt.gun(ink.graphics,kind,color);
+        }
     }
 '''
 
@@ -137,7 +162,8 @@ POINTS = '''
 def render(name):
     if name == 'GunMarkerTagUI':
         methods = GUN
-        init = 'ink=new Shape(); addChild(ink);'
+        init = ('blade=new Shape(); SolidReticleArt.drawBlades(blade.graphics); blade.visible=false; '
+                'addChild(blade); ink=new Shape(); addChild(ink);')
     elif name == 'GunMarkerUI':
         methods = MINIMUM
         init = ''
@@ -150,7 +176,7 @@ def render(name):
         init = ('for (var i:int=0;i<numChildren;i++) getChildAt(i).visible=false; '
                 'stop(); ink=new Shape(); addChild(ink); '
                 + ('ink.rotation=90; ' if solid else '') + 'paint();')
-    return ('package { import flash.display.MovieClip; import flash.display.Shape; '
+    return ('package { import flash.display.MovieClip; import flash.display.Shape; import flash.geom.ColorTransform; '
             'import flash.events.Event; import flash.utils.getTimer; public class '
             + name + ' extends ' + base(name) + ' { public function ' + name + '() { super();'
             + init + '}\n' + methods + '\n}}\n')

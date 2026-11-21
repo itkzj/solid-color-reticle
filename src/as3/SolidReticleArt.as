@@ -13,9 +13,14 @@ package {
         private static const RADIUS:Number=256;
         private static const TICKS:int=24;
 
+        public static function ringProgress(progress:Number,solid:Boolean):Number {
+            return solid?progress:Math.ceil(progress*TICKS);
+        }
+
         public static function ring(g:Graphics, progress:Number, solid:Boolean, bold:Boolean):void {
             g.clear();
             var ink:Number=bold?8:4;
+            var ticks:Number=ringProgress(progress,solid);
             for (var pass:int=0;pass<2;pass++) {
                 if (solid) {
                     if (!pass || progress<=0 || progress>=1) {
@@ -33,7 +38,7 @@ package {
                     for (var i:int=0;i<TICKS;i++) {
                         var angle:Number=i*Math.PI*2/TICKS-Math.PI/2;
                         var x:Number=Math.cos(angle), y:Number=Math.sin(angle);
-                        stroke(g,ink+(pass?0:2),pass?(i<progress*TICKS?GREEN:WHITE):BACK,LineScaleMode.NONE);
+                        stroke(g,ink+(pass?0:2),pass?(i<ticks?GREEN:WHITE):BACK,LineScaleMode.NONE);
                         segment(g,x*206,y*206,x*RADIUS,y*RADIUS);
                     }
                 }
@@ -60,13 +65,12 @@ package {
         private static const BLADE_SAMPLES:int=4;
         // V19's placed blade reaches about 239.4 local units from the centre.
         private static const BLADE_RADIUS:Number=239.4;
-        private static const blades:Object={};
+        private static var bladeTexture:BitmapData;
 
-        public static function gun(g:Graphics, type:Number, color:uint, blade:Boolean):void {
+        public static function gun(g:Graphics, type:Number, color:uint):void {
             g.clear();
             if (!isFinite(type)||type!=int(type)||type<0||type>=15) return;
             var group:int=int(type/3);
-            if (blade) drawBlades(g,color);
             for (var pass:int=0;pass<2;pass++) {
                 var ink:uint=pass?color:BACK;
                 var width:Number=group==0?2.5:group==3?1.25:2;
@@ -92,12 +96,9 @@ package {
             }
         }
 
-        private static function drawBlades(g:Graphics,color:uint):void {
-            var image:BitmapData=blades[color];
-            if (!image) {
-                image=makeBlade(color);
-                blades[color]=image;
-            }
+        public static function drawBlades(g:Graphics):void {
+            if (!bladeTexture) bladeTexture=makeBlade();
+            var image:BitmapData=bladeTexture;
             var scale:Number=BLADE_RADIUS*BLADE_SAMPLES/image.width;
             var length:Number=BLADE_RADIUS;
             var half:Number=BLADE_HALF_HEIGHT*scale;
@@ -117,10 +118,16 @@ package {
             }
         }
 
-        private static function makeBlade(color:uint):BitmapData {
+        private static function makeBlade():BitmapData {
             // Historical pointed-spindle design: narrow spine, inner highlight and a separate soft halo.
             var image:BitmapData=new BitmapData(Math.ceil((BLADE_GAP+BLADE_LENGTH)*BLADE_SAMPLES),
                 BLADE_HALF_HEIGHT*2*BLADE_SAMPLES,true,0);
+            var haloRows:Array=[], coreRows:Array=[];
+            for (var row:int=0;row<image.height;row++) {
+                var offset:Number=(row+.5)/BLADE_SAMPLES-BLADE_HALF_HEIGHT;
+                haloRows[row]=.19*gaussian(offset/3.7)+.27*gaussian(offset/1.65);
+                coreRows[row]=gaussian(offset/.235);
+            }
             image.lock();
             for (var x:int=0;x<image.width;x++) {
                 var along:Number=(x+.5)/BLADE_SAMPLES;
@@ -143,21 +150,19 @@ package {
                 for (var y:int=0;y<image.height;y++) {
                     var across:Number=(y+.5)/BLADE_SAMPLES-BLADE_HALF_HEIGHT;
                     var clearance:Number=smoothstep((Math.sqrt(along*along+across*across)-4.44)/2.22);
-                    var glow:Number=(.19*gaussian(across/3.7)+.27*gaussian(across/1.65))*envelope*clearance;
+                    var glow:Number=haloRows[y]*envelope*clearance;
                     var body:Number=0, core:Number=0;
                     if (distance>=0 && distance<=BLADE_LENGTH) {
                         body=.8*Math.max(0,Math.min(1,(width-Math.abs(across))*BLADE_SAMPLES+.5))*(1-.73*q);
-                        core=highlight*gaussian(across/.235);
+                        core=highlight*coreRows[y];
                     }
                     var light:Number=glow+body;
-                    var red:Number=Math.min(255,light*((color>>16)&255)+core*255);
-                    var green:Number=Math.min(255,light*((color>>8)&255)+core*240);
-                    var blue:Number=Math.min(255,light*(color&255)+core*186);
-                    var alpha:int=Math.round(Math.max(red,green,blue));
+                    var energy:Number=light+core;
+                    var alpha:int=Math.round(Math.min(1,energy)*255);
                     if (alpha>0) {
-                        var normalize:Number=255/Math.max(red,green,blue);
-                        image.setPixel32(x,y,(alpha<<24)|(Math.round(red*normalize)<<16)|
-                            (Math.round(green*normalize)<<8)|Math.round(blue*normalize));
+                        // Gray controls the blend from the probability hue to the warm highlight.
+                        var gray:int=Math.round(core/energy*255);
+                        image.setPixel32(x,y,(alpha<<24)|(gray<<16)|(gray<<8)|gray);
                     }
                 }
             }

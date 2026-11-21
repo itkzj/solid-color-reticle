@@ -34,10 +34,7 @@ METHODS='''
             HIDE_NATIVE_ZOOM
             if(h.parent!=this)addChild(h);
             if(h.data.arty)WhiteBladeMarkers.apply(parent);
-            h.data.centerType=centerType;h.data.centerOpacity=centerAlpha;
-            h.data.reloadOpacity=reloadingBarAlpha;h.data.healthOpacity=healthBarAlpha;
-            h.data.clipOpacity=cassetteAlpha;h.data.timeOpacity=reloadingTimeFieldAlpha;
-            h.refresh();
+            refreshStyle();
             if(cassetteMC) {
                 // Native isCassette excludes special loaders; restore a previously hidden fallback.
                 cassetteMC.visible=isCassette && h.clipGroups()>10;
@@ -48,32 +45,48 @@ METHODS='''
                 }
             }
         }
-        override public function setNetType(v:Number):void {super.setNetType(v);clean();}
-        override public function setCenterType(v:Number):void {super.setCenterType(v);clean();}
-        override public function setComponentsAlpha(net:Number,center:Number,reload:Number,hp:Number,clip:Number,time:Number,other:Number):void {
-            super.setComponentsAlpha(net,center,reload,hp,clip,time,other);clean();
+        private function refreshStyle():void {
+            var h:WhiteBladeHUD=hud();
+            h.data.centerType=centerType;h.data.centerOpacity=centerAlpha;
+            h.data.reloadOpacity=reloadingBarAlpha;h.data.healthOpacity=healthBarAlpha;
+            h.data.clipOpacity=cassetteAlpha;h.data.timeOpacity=reloadingTimeFieldAlpha;
+            h.refresh();
         }
-        override public function setReloadingState(v:String):void {super.setReloadingState(v);hud().setReloadState(v);clean();}
-        override public function setReloadingAsPercent(v:Number):void {super.setReloadingAsPercent(v);hud().setReloadPercent(v);clean();}
-        override public function setReloadingTime(v:Number):void {super.setReloadingTime(v);hud().data.remaining=isFinite(v)?Math.max(0,v):NaN;clean();}
-        override public function setHealth(v:Number):void {super.setHealth(v);hud().data.healthRatio=v;if(isFinite(hud().data.maxHealth))hud().data.health=Math.round(v*hud().data.maxHealth);clean();}
-        override public function setDistance(v:String):void {super.setDistance(v);var n:Array=v?v.match(/[0-9]+(?:[.,][0-9]+)?/):null;hud().data.distance=n?n[0]+" m":"";clean();}
-        override public function clearDistance(immediate:Boolean):void {super.clearDistance(immediate);hud().data.distance="";clean();}
-        override public function setZoom(v:String):void {super.setZoom(v);var n:Array=v?v.match(/[0-9]+(?:[.,][0-9]+)?/):null;hud().data.zoom=n?"\u00d7"+n[0]:"";clean();}
-        override public function setClipsParam(capacity:Number,burst:Number,type:int):void {super.setClipsParam(capacity,burst,type);hud().data.capacity=Math.max(1,capacity);hud().data.burstSize=Math.max(1,burst);clean();}
-        override public function setAmmoStock(total:uint,loaded:Number,state:String,reloaded:Boolean=false):void {super.setAmmoStock(total,loaded,state,reloaded);hud().setStock(total,loaded);clean();}
-        private const numberFields:Array=["health","maxHealth","burstTime","height","splashPixels","splashRadiusX","splashRadiusY","splashRotation","splashX","splashY","flight","penetration","splash","traverseLeft","traverseRight","traverseLeftRatio","traverseRightRatio","traverseRotation"];
+        override public function setNetType(v:Number):void {super.setNetType(v);}
+        override public function setCenterType(v:Number):void {super.setCenterType(v);refreshStyle();}
+        override public function setComponentsAlpha(net:Number,center:Number,reload:Number,hp:Number,clip:Number,time:Number,other:Number):void {
+            super.setComponentsAlpha(net,center,reload,hp,clip,time,other);refreshStyle();
+        }
+        override protected function updateReloadingState():void {
+            super.updateReloadingState();
+            // Native state and progress updates can re-show these before the next frame.
+            if(reloadingAnimationMC)reloadingAnimationMC.visible=false;
+            if(timerProgressTextField)timerProgressTextField.visible=false;
+            if(timerCompleteTextField)timerCompleteTextField.visible=false;
+        }
+        override public function setReloadingState(v:String):void {super.setReloadingState(v);hud().setReloadState(v);hud().refresh();}
+        override public function setReloadingAsPercent(v:Number):void {super.setReloadingAsPercent(v);hud().setReloadPercent(v);hud().refresh();}
+        override public function setReloadingTime(v:Number):void {super.setReloadingTime(v);hud().data.remaining=isFinite(v)?Math.max(0,v):NaN;hud().refresh();}
+        override public function setHealth(v:Number):void {super.setHealth(v);hud().data.healthRatio=v;if(isFinite(hud().data.maxHealth))hud().data.health=Math.round(v*hud().data.maxHealth);hud().refresh();}
+        override public function setDistance(v:String):void {super.setDistance(v);var n:Array=v?v.match(/[0-9]+(?:[.,][0-9]+)?/):null;hud().data.distance=n?n[0]+" m":"";hud().refresh();}
+        override public function clearDistance(immediate:Boolean):void {super.clearDistance(immediate);hud().data.distance="";hud().refresh();}
+        override public function setZoom(v:String):void {super.setZoom(v);var n:Array=v?v.match(/[0-9]+(?:[.,][0-9]+)?/):null;hud().data.zoom=n?"\u00d7"+n[0]:"";HIDE_ZOOM_NOW hud().refresh();}
+        override public function setClipsParam(capacity:Number,burst:Number,type:int):void {super.setClipsParam(capacity,burst,type);hud().data.capacity=Math.max(1,capacity);hud().data.burstSize=Math.max(1,burst);hud().refresh();}
+        override public function setAmmoStock(total:uint,loaded:Number,state:String,reloaded:Boolean=false):void {super.setAmmoStock(total,loaded,state,reloaded);hud().setStock(total,loaded);hud().refresh();}
+        private const numberFields:Array=["health","maxHealth","total","burstTime","height","splashRadiusX","splashRadiusY","splashRotation","splashX","splashY","flight","penetration","aimArmor","aimChance","aimColor","splash","traverseLeft","traverseRight","traverseLeftRatio","traverseRightRatio","traverseRotation"];
         public function as_whiteBladeData(value:Object):Boolean {
             if(!value)return false;
             var h:WhiteBladeHUD=hud();
             var d:Object=h.data;
-            if(value.hasOwnProperty("fullReloadTime"))d.total=Number(value.fullReloadTime);
-            else if(value.hasOwnProperty("total"))d.total=Number(value.total);
             for each(var k:String in numberFields)
                 if(value.hasOwnProperty(k))d[k]=Number(value[k]);
             if(value.hasOwnProperty("shell"))d.shell=String(value.shell);
             if(value.readyText is String && value.readyText.length>0)d.readyText=value.readyText;
-            clean();return true;
+            h.refresh();return true;
+        }
+        public function as_whiteBladeAim(armor:Number,chance:Number,color:Number):Boolean {
+            if(ARTY)return false;
+            hud().setAim(armor,chance,color);return true;
         }
         override protected function onDispose():void {removeEventListener(Event.ENTER_FRAME,clean);super.onDispose();whiteBlade=null;}
 '''
@@ -90,4 +103,4 @@ def render(mode):
     body+='private const HIDE:Array=["timerProgressTextField","timerCompleteTextField","reloadTimeBlink","reloadingBar","reloadingAnimationMC","healthBarMC","centerMC","netMC","netSeparator","distance","averageDamage"];\n'
     body+='public function '+old+'(){super();addEventListener(Event.ENTER_FRAME,clean);}\n'
     hide_zoom = '            if(zoomTF)zoomTF.visible=false;\n' if mode == 'sniper' else ''
-    return body + METHODS.replace('            HIDE_NATIVE_ZOOM\n', hide_zoom) + '\n}}\n'
+    return body + METHODS.replace('            HIDE_NATIVE_ZOOM\n', hide_zoom).replace('HIDE_ZOOM_NOW ', hide_zoom.strip() + ' ' if hide_zoom else '') + '\n}}\n'

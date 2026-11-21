@@ -22,7 +22,9 @@ HUD_TAG = {'arcade': (2, 175, 'f1b27c13286cb7b92f04b258272584299ecea9ec42be97d9c
            'strategic': (3, 61, '1174e9997e83c47c820fe3a13ea99ad52abee71dd6a8c93e06e40d6068bd1734')}
 CONTROLS_SHA = 'a0e318c7ee469629e86c6b72282fae5d1423c28e0f3bfbd589feaaf7e65c4565'
 PYTHON = {'mod_white_blade': 'res/scripts/client/gui/mods/mod_white_blade.pyc',
-          'white_blade_geometry': 'res/scripts/client/white_blade_geometry.pyc'}
+          'white_blade_minimum': 'res/scripts/client/white_blade_minimum.pyc',
+          'white_blade_geometry': 'res/scripts/client/white_blade_geometry.pyc',
+          'white_blade_penetration': 'res/scripts/client/white_blade_penetration.pyc'}
 
 
 def require(ok, message):
@@ -37,7 +39,7 @@ def archive_bytes(files):
             archive.writestr(name, data)
     output = raw.getvalue()
     with ZipFile(BytesIO(output)) as archive:
-        require(archive.testzip() is None and archive.namelist() == list(files)
+        require(archive.namelist() == list(files)
                 and all(archive.read(name) == data for name, data in files.items()),
                 'ZIP readback mismatch')
     return output
@@ -202,6 +204,8 @@ def compile_adapter(tools, work, main, stubs, adapters):
 
 def build(packages, tools, output):
     require(not output.exists(), 'Output already exists')
+    controls_filename = 'crosshairControls.swf'
+    stock_controls = read_stock(packages, 1, controls_filename, CONTROLS_SHA)
     files = {}
     render = runpy.run_path(str(AS3 / 'adapter.py'))['render']
     with TemporaryDirectory(prefix='solid-color-reticle-', dir=output.parent) as temp:
@@ -227,10 +231,8 @@ def build(packages, tools, output):
             'private var linkages:Array = [' + ','.join(links) + ']; }}')
         donor = compile_adapter(tools, scratch / 'controls', 'SolidReticleLinkages',
                                 {bases[name]: controls['stub'](name) for name in links}, adapters)
-        filename = 'crosshairControls.swf'
-        stock = read_stock(packages, 1, filename, CONTROLS_SHA)
-        files[FLASH + filename] = insert_adapter(stock, donor,
-                                                  {name: (link[0], bases[name]) for name, link in links.items()})
+        files[FLASH + controls_filename] = insert_adapter(
+            stock_controls, donor, {name: (link[0], bases[name]) for name, link in links.items()})
         for module, member in PYTHON.items():
             pyc = scratch / (module + '.pyc')
             subprocess.run([str(tools / 'python27/python.exe'), '-B', '-c',

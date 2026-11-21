@@ -9,15 +9,19 @@ import math
 import BigWorld
 from gui.Scaleform.daapi.view.battle.shared.crosshair.container import CrosshairPanelContainer
 from gui.Scaleform.daapi.view.meta.CrosshairPanelContainerMeta import CrosshairPanelContainerMeta
+import white_blade_minimum
+from white_blade_penetration import estimate
 
 
 _NAN = float('nan')
+_EMPTY_AIM = (_NAN, _NAN, _NAN)
+_AIM_INTERVAL = 1.0 / 30
 _SHELL_NAMES = {'ARMOR_PIERCING': 'AP', 'ARMOR_PIERCING_CR': 'APCR',
                 'ARMOR_PIERCING_HE': 'APHE', 'HOLLOW_CHARGE': 'HEAT',
                 'HIGH_EXPLOSIVE': 'HE', 'SMOKE': 'SMOKE'}
-_DATA_FIELDS = ('health', 'maxHealth', 'total', 'fullReloadTime', 'burstTime', 'height', 'flight',
-                'penetration', 'splash', 'splashPixels', 'splashRadiusX', 'splashRadiusY',
-                'splashRotation', 'splashX', 'splashY')
+_DATA_FIELDS = ('health', 'maxHealth', 'total', 'burstTime', 'height', 'flight',
+                'penetration', 'splash', 'splashRadiusX', 'splashRadiusY',
+                'splashRotation', 'splashX', 'splashY', 'aimArmor', 'aimChance', 'aimColor')
 _TRAVERSE_FIELDS = ('traverseLeft', 'traverseRight', 'traverseLeftRatio', 'traverseRightRatio', 'traverseRotation')
 _READY_KEY = '#ingame_gui:chat_shortcuts/reloading_ready'
 _logger = logging.getLogger('solid_color_reticle')
@@ -55,121 +59,6 @@ def _ready_text():
     return 'Ready'
 
 
-def _minimum_angle(player):
-    # The native dispersion calculation uses this multiplier even at rest.
-    descriptor = player._PlayerAvatar__getDetailedVehicleDescriptor()
-    multiplier = player._PlayerAvatar__dispersionInfo[0]
-    return _number(descriptor.gun.shotDispersionAngle * multiplier)
-
-
-def _minimum_diameter(player, marker):
-    angle = _minimum_angle(player)
-    current = _number(player.gunRotator.getCurShotDispersionAngles()[0])
-    size = _number(marker.size)
-    if angle > 0 and current > 0 and size > 0:
-        # The native marker is 2 * distance * current angle. Keep its distance,
-        # including when a collision or max range has shortened the shot.
-        return angle, size * angle / current
-    return _NAN, _NAN
-
-
-def _install_minimum_markers():
-    import Math
-    from AvatarInputHandler import gun_marker_ctrl as ctrl
-    from gui.Scaleform.daapi.view.battle.shared.crosshair import gm_components
-    from gui.Scaleform.daapi.view.battle.shared.crosshair.gm_factory import _VIEW_ID
-
-    collection = gm_components.GunMarkersComponents
-    default = ctrl._DefaultGunMarkerController
-    spg = ctrl._SPGGunMarkerController
-    make = ctrl._GunMarkersDPFactory
-    original_collection = collection.__init__
-    original_default = default.update
-    original_spg = spg.update
-    primary = (ctrl._MARKER_TYPE.CLIENT, ctrl._MARKER_TYPE.SERVER)
-    reference_type = object()  # Do not participate in native marker-type lookup.
-
-    def create_collection(self, components):
-        state = _active
-        if state is None:
-            return original_collection(self, components)
-        markers = tuple(components)
-        providers, extra, seen = {}, [], set()
-        try:
-            for source in markers:
-                view = source.getViewID()
-                if view in seen or view not in (_VIEW_ID.ARCADE, _VIEW_ID.SNIPER, _VIEW_ID.STRATEGIC):
-                    continue
-                if source.getMarkerType() not in primary:
-                    continue
-                strategic = view == _VIEW_ID.STRATEGIC
-                linkage = 'GunMarkerSPGUI' if strategic else 'GunMarkerUI'
-                # The strategic view can also contain a separate artillery hit marker.
-                if strategic and source.getViewSettings().linkage != linkage:
-                    continue
-                native = source._dataProvider
-                if native is None:
-                    continue
-                key = id(native)
-                if key not in providers:
-                    provider = make._makeSPGProvider() if strategic else make._makeDefaultProvider()
-                    provider.positionMatrixProvider = native.positionMatrixProvider
-                    providers[key] = (native, provider)
-                marker_class = gm_components.SPGGunMarkerComponent if strategic else gm_components.DefaultGunMarkerComponent
-                extra.append(marker_class(reference_type, view, 'solidReticleMinimum' + source.getName(),
-                                          linkage, providers[key][1], source.isActive()))
-                seen.add(view)
-        except Exception:
-            _log('minimum marker setup')
-            return original_collection(self, markers)
-        result = original_collection(self, markers + tuple(extra))
-        if extra:
-            state.minimum_providers = providers
-        return result
-
-    def reference(controller):
-        if _active is not None:
-            pair = _active.minimum_providers.get(id(controller._dataProvider))
-            if pair is not None:
-                return pair[1]
-        return None
-
-    def update_default(self, markerType, gunMarkerInfo, supportMarkersInfo=None, relaxTime=-1.0):
-        result = original_default(self, markerType, gunMarkerInfo, supportMarkersInfo, relaxTime)
-        provider = reference(self)
-        if provider is not None:
-            try:
-                _, diameter = _minimum_diameter(BigWorld.player(), gunMarkerInfo)
-                if diameter > 0:
-                    position = Math.createTranslationMatrix(gunMarkerInfo.position)
-                    position = BigWorld.checkAndRecalculateIfPositionInExtremeProjection(position)
-                    world = ctrl._makeWorldMatrix(position)
-                    pixels = BigWorld.markerHelperScale(world, diameter) * self._DefaultGunMarkerController__screenRatio
-                    provider.sizeConstraint = self._dataProvider.sizeConstraint
-                    provider.updateSizes(pixels, 0.0, relaxTime, 0.0)
-            except Exception:
-                _log('minimum marker projection')
-        return result
-
-    def update_spg(self, markerType, gunMarkerInfo, supportMarkersInfo, relaxTime):
-        result = original_spg(self, markerType, gunMarkerInfo, supportMarkersInfo, relaxTime)
-        provider = reference(self)
-        if provider is not None:
-            try:
-                angle, diameter = _minimum_diameter(BigWorld.player(), gunMarkerInfo)
-                if diameter > 0:
-                    provider.setupConicDispersion(angle)
-                    position, velocity, gravity = self._getCurrentShotInfo()
-                    provider.update(position, velocity, gravity, diameter)
-            except Exception:
-                _log('minimum strategic marker projection')
-        return result
-
-    collection.__init__ = create_collection
-    default.update = update_default
-    spg.update = update_spg
-
-
 class _Bridge(object):
     def __init__(self, panel):
         self.panel = panel
@@ -178,13 +67,18 @@ class _Bridge(object):
         self.reload_gun = None
         self.full_reload = _NAN
         self.vehicle_id = None
+        self.is_spg = False
         self.geometry = None
         self.missing_ticks = 0
         self.warned_missing = False
         self.ready_text = _ready_text()
-        self.marker_names = set()
+        self.marker_names = {}
         self.marker_targets = {}
-        self.minimum_providers = {}
+        self.aim = {}
+        self.aim_receivers = ()
+        self.aim_pending = None
+        self.aim_callback = None
+        self.aim_next = 0.
         self.auto_aim_id = None
         self.target_events = []
         self.target_bus = None
@@ -226,44 +120,158 @@ class _Bridge(object):
                                    (self.panel.sessionProvider.shared.feedback.onVehicleFeedbackReceived, self.feedback)):
                 event += handler
                 self.target_events.append((event, handler))
-            g_eventBus.addListener(GameEvent.ON_TARGET_VEHICLE_CHANGED, self.target_changed, scope=EVENT_BUS_SCOPE.BATTLE)
+            # Lock changes invalidate the previous collision before the next aim update.
+            g_eventBus.addListener(GameEvent.ON_TARGET_VEHICLE_CHANGED, self.clear_colors, scope=EVENT_BUS_SCOPE.BATTLE)
             self.target_bus = (g_eventBus, GameEvent.ON_TARGET_VEHICLE_CHANGED, EVENT_BUS_SCOPE.BATTLE)
+            ammo = self.panel.sessionProvider.shared.ammo
+            for source, name in ((ctrl, 'onGunMarkersSetChanged'), (ammo, 'onCurrentShellChanged')):
+                event = getattr(source, name, None)
+                if event is not None:
+                    handler = self.clear_colors
+                    event += handler
+                    self.target_events.append((event, handler))
         except Exception:
             _log('target subscription')
 
-    def marker_state(self, marker_type, gun_marker_state, support_markers_info):
-        if self.panel is None:
+    def primary_aim_marker(self):
+        from aih_constants import GUN_MARKER_TYPE
+        from gui.battle_control.battle_constants import CROSSHAIR_VIEW_ID
+        if self.is_spg or self.panel.getViewID() not in (CROSSHAIR_VIEW_ID.ARCADE, CROSSHAIR_VIEW_ID.SNIPER):
+            return None
+        info = self.panel.sessionProvider.shared.crosshair.getGunMarkersSetInfo()
+        if info.isServerMarkerActivated:
+            return GUN_MARKER_TYPE.SERVER
+        if info.isClientMarkerActivated:
+            return GUN_MARKER_TYPE.CLIENT
+        return None
+
+    def aim_estimate(self, marker, entity):
+        import constants
+        from AvatarInputHandler.gun_marker_ctrl import _CrosshairShotResults
+        from Vehicle import Vehicle
+        player = BigWorld.player()
+        if (not isinstance(entity, Vehicle) or entity.health <= 0 or not entity.isCrewActive
+                or entity.publicInfo['team'] == self.team or BigWorld.entity(entity.id) is not entity
+                or player is None):
+            return None
+        vehicle = self.vehicle()
+        if vehicle is None or player.getVehicleAttached() is not vehicle:
+            return None
+        if self.is_spg:
+            return None
+        modifiers = self.panel.sessionProvider.arenaVisitor.modifiers.getConstantsModification()
+        anchors = (modifiers.PIERCING_POWER_INTERPOLATION_DIST_FIRST,
+                   modifiers.PIERCING_POWER_INTERPOLATION_DIST_LAST)
+        return estimate(marker, player, _CrosshairShotResults._getAllCollisionDetails,
+                        self.piercing, anchors, constants.SHELL_MECHANICS_TYPE.MODERN)
+
+    def push_aim(self, aim):
+        receivers = []
+        for receive in self.aim_receivers:
+            try:
+                if receive(*(aim if aim is not None else _EMPTY_AIM)) is True:
+                    receivers.append(receive)
+            except Exception:
+                _log('GFx aim')
+        self.aim_receivers = tuple(receivers)
+
+    def cancel_aim(self):
+        self.aim_pending = None
+        callback, self.aim_callback = self.aim_callback, None
+        if callback is not None:
+            try:
+                BigWorld.cancelCallback(callback)
+            except Exception:
+                _log('cancel aim callback')
+
+    def flush_aim(self, callback):
+        if self.aim_callback != callback:
             return
-        color = 'normal'
-        self.marker_targets[marker_type] = None
-        try:
+        self.aim_callback = None
+        pending, self.aim_pending = self.aim_pending, None
+        if pending is not None and self.panel is not None:
+            marker_type, marker, entity = pending
+            try:
+                if marker_type == self.primary_aim_marker() and self.marker_targets.get(marker_type) is entity:
+                    self.aim_next = BigWorld.time() + _AIM_INTERVAL
+                    self.resolve_marker(marker_type, marker, entity, True)
+            except Exception:
+                _log('pending aim update')
+
+    def resolve_marker(self, marker_type, marker, entity, primary):
+        color, aim = 'normal', None
+        if entity is not None:
             self.team = self.panel.sessionProvider.getArenaDP().getNumberOfTeam()
-            # CN 2.4.1.1 sends a GunMarkerState object plus support-marker info.
-            # Match the installed ShotResultIndicatorPlugin and its resolver API.
-            result = self.resolver.getShotResult(gun_marker_state, excludeTeam=self.team, piercingMultiplier=self.piercing)
-            colors = self.alt_colors if self.settings_core.getSetting(self.color_blind_key) else self.shot_colors
-            color = colors.get(result, 'normal')
-            collision = gun_marker_state.collData
-            self.marker_targets[marker_type] = collision.entity if collision is not None else None
+        if primary and entity is not None:
+            try:
+                aim = self.aim_estimate(marker, entity)
+                if aim is not None:
+                    aim = (round(aim[0]), aim[1], aim[2])
+            except Exception:
+                _log('aim penetration estimate')
+        try:
+            if aim is not None:
+                color = 'wb%06x' % aim[2]
+            elif entity is not None:
+                result = self.resolver.getShotResult(marker, excludeTeam=self.team, piercingMultiplier=self.piercing)
+                colors = self.alt_colors if self.settings_core.getSetting(self.color_blind_key) else self.shot_colors
+                color = colors.get(result, 'normal')
         except Exception:
             _log('native shot result')
         try:
             self.panel.setGunMarkerColor(marker_type, color)
         except Exception:
+            aim = None
             _log('marker color')
+        self.marker_targets[marker_type] = entity
+        previous = self.aim.pop(marker_type, None)
+        if aim is not None:
+            self.aim[marker_type] = aim
+        if previous != aim:
+            self.push_aim(aim)
+
+    def marker_state(self, marker_type, gun_marker_state, support_markers_info):
+        if self.panel is None:
+            return
+        try:
+            collision = gun_marker_state.collData
+            entity = collision.entity if collision is not None else None
+            previous = self.marker_targets.get(marker_type)
+            if entity is None and previous is None:
+                return
+            self.marker_targets[marker_type] = entity
+            primary = hasattr(self.panel, 'getViewID') and marker_type == self.primary_aim_marker()
+            if primary:
+                now = BigWorld.time()
+                # Capture only the newest event between samples. Acquiring or losing a target bypasses the interval.
+                if entity is not None and entity is previous and now < self.aim_next:
+                    self.aim_pending = (marker_type, gun_marker_state, entity)
+                    if self.aim_callback is None:
+                        callback = BigWorld.callback(self.aim_next - now, lambda: self.flush_aim(callback))
+                        self.aim_callback = callback
+                    return
+                self.cancel_aim()
+                self.aim_next = now + _AIM_INTERVAL if entity is not None else 0.
+            self.resolve_marker(marker_type, gun_marker_state, entity, primary)
+        except Exception:
+            _log('marker update')
 
     def feedback(self, event_id, vehicle_id, value):
         if event_id == self.feedback_event:
-            self.piercing = value.get('gunPiercing', 1)
+            piercing = value.get('gunPiercing', 1)
+            if piercing != self.piercing:
+                self.piercing = piercing
+                self.clear_colors()
 
     def clear_colors(self, *unused):
+        self.cancel_aim()
+        self.aim_next = 0.
+        if self.aim:
+            self.aim.clear()
+            self.push_aim(None)
         self.marker_targets.clear()
         for name in tuple(self.marker_names):
             self.panel.as_setGunMarkerColorS(name, 'normal')
-
-    def target_changed(self, event):
-        # Lock changes invalidate the previous collision, even before the next aim update.
-        self.clear_colors()
 
     def check_targets(self):
         try:
@@ -283,6 +291,10 @@ class _Bridge(object):
             except Exception:
                 valid = False
             if not valid:
+                if self.aim_pending is not None and self.aim_pending[0] == marker_type:
+                    self.cancel_aim()
+                if self.aim.pop(marker_type, None) is not None:
+                    self.push_aim(None)
                 self.panel.setGunMarkerColor(marker_type, 'normal')
                 self.marker_targets[marker_type] = None
 
@@ -296,6 +308,8 @@ class _Bridge(object):
             self.reload_gun = None
             self.full_reload = _NAN
             self.vehicle_id = vehicle_id
+            vehicle_type = getattr(vehicle.typeDescriptor, 'type', None) if vehicle is not None else None
+            self.is_spg = getattr(vehicle_type, 'classTag', None) == 'SPG'
         return vehicle
 
     def observe_flights(self, values):
@@ -354,7 +368,7 @@ class _Bridge(object):
         return _number(getattr(gun, 'reloadTime', None))
 
     def sample(self):
-        data = dict.fromkeys(_DATA_FIELDS, _NAN)
+        data = dict.fromkeys(_DATA_FIELDS + _TRAVERSE_FIELDS, _NAN)
         data.update(shell='', readyText=self.ready_text)
         self.check_targets()
         vehicle = None
@@ -367,10 +381,11 @@ class _Bridge(object):
             self.flights.clear()
             _log('vehicle state')
         ammo = None
+        base_reload = _NAN
         try:
             ammo = self.panel.sessionProvider.shared.ammo
             if ammo is not None:
-                data['total'] = _number(ammo.getGunReloadingState().getBaseValue())
+                base_reload = _number(ammo.getGunReloadingState().getBaseValue())
         except Exception:
             _log('reload base time')
         if ammo is not None:
@@ -379,8 +394,8 @@ class _Bridge(object):
                 settings = ammo.getGunSettings()
                 data['burstTime'] = _number(settings.getClipInterval())
                 if vehicle is not None:
-                    data['fullReloadTime'] = self.full_reload_time(
-                        vehicle.typeDescriptor.gun, settings.clip.size, data['total'], data['burstTime'])
+                    data['total'] = self.full_reload_time(
+                        vehicle.typeDescriptor.gun, settings.clip.size, base_reload, data['burstTime'])
             except Exception:
                 _log('gun reload settings')
             try:
@@ -403,22 +418,18 @@ class _Bridge(object):
                         break
             except Exception:
                 _log('current shell')
+        if self.aim:
+            aim = self.aim.get(self.primary_aim_marker())
+            if aim is not None:
+                data.update(aimArmor=aim[0], aimChance=aim[1], aimColor=aim[2])
         if self.geometry is not None:
             try:
-                data.update(self.geometry.sample(self.panel, data['splash']))
+                footprint, traverse = self.geometry.sample(self.panel, data['splash'], vehicle, _log)
+                data.update(footprint)
+                data.update(zip(_TRAVERSE_FIELDS, traverse))
             except Exception:
                 _log('geometry sample')
         return data
-
-    def sample_traverse(self):
-        if self.geometry is not None:
-            try:
-                from white_blade_geometry import traverse
-                vehicle = self.panel.sessionProvider.shared.vehicleState.getControllingVehicle()
-                return traverse(self.panel, vehicle)
-            except Exception:
-                _log('gun traverse')
-        return (_NAN,) * len(_TRAVERSE_FIELDS)
 
     def schedule(self):
         if _active is self and self.panel is not None and self.callback is None:
@@ -437,8 +448,8 @@ class _Bridge(object):
                 _stop(self.panel)
                 return
             data = self.sample()
-            data.update(zip(_TRAVERSE_FIELDS, self.sample_traverse()))
             found = False
+            aim_receivers = []
             flash = self.panel.flashObject
             # Native initCrosshairs adds the wrappers directly; Timeline.name is read-only.
             for index in range(int(flash.numChildren)):
@@ -448,8 +459,12 @@ class _Bridge(object):
                     # An undefined GFx dynamic method may still be callable: require ACK.
                     if callable(receive) and receive(data) is True:
                         found = True
+                        receive_aim = getattr(child, 'as_whiteBladeAim', None)
+                        if callable(receive_aim):
+                            aim_receivers.append(receive_aim)
                 except Exception:
                     _log('GFx child %d' % index)
+            self.aim_receivers = tuple(aim_receivers)
             self.missing_ticks = 0 if found else self.missing_ticks + 1
             if self.missing_ticks >= 10 and not self.warned_missing:
                 self.warned_missing = True
@@ -470,10 +485,13 @@ class _Bridge(object):
         if self.target_bus is not None:
             bus, kind, scope = self.target_bus
             try:
-                bus.removeListener(kind, self.target_changed, scope=scope)
+                bus.removeListener(kind, self.clear_colors, scope=scope)
             except Exception:
                 _log('target event unsubscribe')
             self.target_bus = None
+        self.cancel_aim()
+        self.aim.clear()
+        self.aim_receivers = ()
         self.marker_targets.clear()
         self.marker_names.clear()
         callback, self.callback = self.callback, None
@@ -491,6 +509,7 @@ def _stop(panel=None):
     global _active
     if _active is not None and (panel is None or _active.panel is panel):
         state, _active = _active, None
+        white_blade_minimum.stop()
         state.stop()
 
 
@@ -510,6 +529,7 @@ def init():
         try:
             _stop()
             _active = _Bridge(panel)
+            white_blade_minimum.start()
         except Exception:
             _log('populate bridge')
         try:
@@ -538,12 +558,16 @@ def init():
         return result
 
     def marker_color(panel, name, color, *args, **kwargs):
+        state = _active if _active is not None and _active.panel is panel else None
+        previous = state.marker_names.get(name) if state is not None else None
+        if previous is not None and previous[0] == color:
+            return previous[1]
         result = original_color(panel, name, color, *args, **kwargs)
-        if _active is not None and _active.panel is panel:
+        if state is not None:
             if color == 'normal':
-                _active.marker_names.discard(name)
+                state.marker_names.pop(name, None)
             else:
-                _active.marker_names.add(name)
+                state.marker_names[name] = (color, result)
         return result
 
     CrosshairPanelContainer._populate = populate
@@ -551,7 +575,7 @@ def init():
     CrosshairPanelContainerMeta.as_setShotFlyTimesS = flights
     CrosshairPanelContainerMeta.as_setGunMarkerColorS = marker_color
     try:
-        _install_minimum_markers()
+        white_blade_minimum.install(_log)
     except Exception:
         _log('install minimum markers')
     _installed = True
