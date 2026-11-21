@@ -283,7 +283,7 @@ class _Bridge(object):
                 self.auto_aim_id = ident
         except Exception:
             _log('auto aim state')
-        for marker_type, entity in list(self.marker_targets.items()):
+        for marker_type, entity in self.marker_targets.items():
             if entity is None:
                 continue
             try:

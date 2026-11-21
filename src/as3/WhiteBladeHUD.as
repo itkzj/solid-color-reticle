@@ -367,7 +367,6 @@ package {
             }
         }
         public function setAim(armor:Number,chance:Number,color:Number):void {
-            if(data.arty)return;
             data.aimArmor=previous.aimArmor=armor;
             data.aimChance=previous.aimChance=chance;
             data.aimColor=previous.aimColor=color;

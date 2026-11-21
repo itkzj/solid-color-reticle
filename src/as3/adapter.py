@@ -35,6 +35,9 @@ METHODS='''
             if(h.parent!=this)addChild(h);
             if(h.data.arty)WhiteBladeMarkers.apply(parent);
             refreshStyle();
+            syncCassette(h);
+        }
+        private function syncCassette(h:WhiteBladeHUD):void {
             if(cassetteMC) {
                 // Native isCassette excludes special loaders; restore a previously hidden fallback.
                 cassetteMC.visible=isCassette && h.clipGroups()>10;
@@ -52,7 +55,6 @@ METHODS='''
             h.data.clipOpacity=cassetteAlpha;h.data.timeOpacity=reloadingTimeFieldAlpha;
             h.refresh();
         }
-        override public function setNetType(v:Number):void {super.setNetType(v);}
         override public function setCenterType(v:Number):void {super.setCenterType(v);refreshStyle();}
         override public function setComponentsAlpha(net:Number,center:Number,reload:Number,hp:Number,clip:Number,time:Number,other:Number):void {
             super.setComponentsAlpha(net,center,reload,hp,clip,time,other);refreshStyle();
@@ -71,7 +73,15 @@ METHODS='''
         override public function setDistance(v:String):void {super.setDistance(v);var n:Array=v?v.match(/[0-9]+(?:[.,][0-9]+)?/):null;hud().data.distance=n?n[0]+" m":"";hud().refresh();}
         override public function clearDistance(immediate:Boolean):void {super.clearDistance(immediate);hud().data.distance="";hud().refresh();}
         override public function setZoom(v:String):void {super.setZoom(v);var n:Array=v?v.match(/[0-9]+(?:[.,][0-9]+)?/):null;hud().data.zoom=n?"\u00d7"+n[0]:"";HIDE_ZOOM_NOW hud().refresh();}
-        override public function setClipsParam(capacity:Number,burst:Number,type:int):void {super.setClipsParam(capacity,burst,type);hud().data.capacity=Math.max(1,capacity);hud().data.burstSize=Math.max(1,burst);hud().refresh();}
+        override public function setClipsParam(capacity:Number,burst:Number,type:int):void {
+            super.setClipsParam(capacity,burst,type);
+            var h:WhiteBladeHUD=hud();
+            h.data.capacity=Math.max(1,capacity);
+            h.data.burstSize=Math.max(1,burst);
+            h.refresh();
+            if(netSeparator)netSeparator.visible=false;
+            syncCassette(h);
+        }
         override public function setAmmoStock(total:uint,loaded:Number,state:String,reloaded:Boolean=false):void {super.setAmmoStock(total,loaded,state,reloaded);hud().setStock(total,loaded);hud().refresh();}
         private const numberFields:Array=["health","maxHealth","total","burstTime","height","splashRadiusX","splashRadiusY","splashRotation","splashX","splashY","flight","penetration","aimArmor","aimChance","aimColor","splash","traverseLeft","traverseRight","traverseLeftRatio","traverseRightRatio","traverseRotation"];
         public function as_whiteBladeData(value:Object):Boolean {
