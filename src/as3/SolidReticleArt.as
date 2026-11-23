@@ -11,7 +11,7 @@ package {
         public static const WHITE:uint=0xF7FAFF, GREEN:uint=0x7FFF36;
         private static const BACK:uint=0x10181E;
         private static const RADIUS:Number=256;
-        private static const TICKS:int=24;
+        private static const TICKS:int=16;
 
         public static function ringProgress(progress:Number,solid:Boolean):Number {
             return solid?progress:Math.ceil(progress*TICKS);
@@ -38,11 +38,24 @@ package {
                     for (var i:int=0;i<TICKS;i++) {
                         var angle:Number=i*Math.PI*2/TICKS-Math.PI/2;
                         var x:Number=Math.cos(angle), y:Number=Math.sin(angle);
-                        stroke(g,ink+(pass?0:2),pass?(i<ticks?GREEN:WHITE):BACK,LineScaleMode.NONE);
-                        segment(g,x*206,y*206,x*RADIUS,y*RADIUS);
+                        var color:uint=pass?(i<ticks?GREEN:WHITE):BACK;
+                        stroke(g,(bold?1.25:.75)+(pass?0:1.25),color,LineScaleMode.NONE);
+                        tick(g,x,y,bold,color);
                     }
                 }
             }
+        }
+
+        private static function tick(g:Graphics,x:Number,y:Number,bold:Boolean,color:uint):void {
+            var inset:Number=RADIUS-28;
+            var inner:Number=bold?2.5:1.5, outer:Number=bold?6:4;
+            g.beginFill(color);
+            g.moveTo(x*inset-y*inner,y*inset+x*inner);
+            g.lineTo(x*RADIUS-y*outer,y*RADIUS+x*outer);
+            g.lineTo(x*RADIUS+y*outer,y*RADIUS-x*outer);
+            g.lineTo(x*inset+y*inner,y*inset-x*inner);
+            g.lineTo(x*inset-y*inner,y*inset+x*inner);
+            g.endFill();
         }
 
         private static function arc(g:Graphics,from:Number,to:Number):void {

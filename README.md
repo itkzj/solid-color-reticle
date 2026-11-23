@@ -1,6 +1,6 @@
 # 纯色瞄准
 
-纯色瞄准是《坦克世界》国服准星模组，覆盖街机、狙击和火炮战略模式。V4.5 已在国服 **2.4.1.1** 完成游戏内验收。构建脚本会核对原版准星文件的哈希，请使用匹配的客户端版本。
+纯色瞄准是《坦克世界》国服准星模组，覆盖街机、狙击和火炮战略模式。V4.6 已在国服 **2.4.1.1** 完成游戏内验收。构建脚本会核对原版准星文件的哈希，请使用匹配的客户端版本。
 
 ## 显示内容
 
@@ -25,7 +25,7 @@ python27/python.exe                  Python 2.7，用于生成游戏加载的字
 在仓库根目录运行下列命令，将前两个参数替换为游戏的 `res/packages` 目录和你的工具目录。请在仓库之外选择一个尚未存在的输出 ZIP 路径。
 
 ```powershell
-python build_tools/build_local.py "D:/Games/World_of_Tanks_CN/res/packages" "D:/wot-build-tools" "../纯色瞄准V4.5.zip"
+python build_tools/build_local.py "D:/Games/World_of_Tanks_CN/res/packages" "D:/wot-build-tools" "../纯色瞄准V4.6.zip"
 ```
 
 ## 安装与卸载
