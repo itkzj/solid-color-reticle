@@ -26,7 +26,7 @@ _TRAVERSE_FIELDS = ('traverseLeft', 'traverseRight', 'traverseLeftRatio', 'trave
 _READY_KEY = '#ingame_gui:chat_shortcuts/reloading_ready'
 _logger = logging.getLogger('solid_color_reticle')
 _errors = 0
-_installed = False
+_hooks = None
 _active = None
 
 
@@ -513,10 +513,31 @@ def _stop(panel=None):
         state.stop()
 
 
+def _restore_hooks(hooks):
+    while hooks:
+        cls, name, previous, wrapper = hooks.pop()
+        if cls.__dict__.get(name) is wrapper:
+            if previous is None:
+                delattr(cls, name)
+            else:
+                setattr(cls, name, previous)
+
+
 def init():
-    global _installed
-    if _installed:
+    global _hooks
+    if _hooks is not None:
         return
+    hooks = []
+
+    def add_hook(cls, name, wrapper):
+        previous = cls.__dict__.get(name)
+        setattr(cls, name, wrapper)
+        hooks.append((cls, name, previous, wrapper))
+
+    def enabled():
+        # A later mod can keep calling this installation's wrappers after fini().
+        return _hooks is hooks
+
     original_populate = CrosshairPanelContainer._populate
     original_dispose = CrosshairPanelContainer._dispose
     original_flights = CrosshairPanelContainerMeta.as_setShotFlyTimesS
@@ -524,6 +545,8 @@ def init():
 
     def populate(panel, *args, **kwargs):
         global _active
+        if not enabled():
+            return original_populate(panel, *args, **kwargs)
         # Reserve state before native plugin startup so its first flight event is
         # captured. Polling only starts AFTER the native populate has succeeded.
         try:
@@ -535,9 +558,10 @@ def init():
         try:
             result = original_populate(panel, *args, **kwargs)
         except Exception:
-            _stop(panel)
+            if enabled():
+                _stop(panel)
             raise
-        if _active is not None and _active.panel is panel:
+        if enabled() and _active is not None and _active.panel is panel:
             _active.start_targets()
             _active.schedule()
         return result
@@ -546,11 +570,12 @@ def init():
         try:
             return original_dispose(panel, *args, **kwargs)
         finally:
-            _stop(panel)
+            if enabled():
+                _stop(panel)
 
     def flights(panel, values, *args, **kwargs):
         result = original_flights(panel, values, *args, **kwargs)
-        if _active is not None and _active.panel is panel:
+        if enabled() and _active is not None and _active.panel is panel:
             try:
                 _active.observe_flights(values)
             except Exception:
@@ -558,7 +583,7 @@ def init():
         return result
 
     def marker_color(panel, name, color, *args, **kwargs):
-        state = _active if _active is not None and _active.panel is panel else None
+        state = _active if enabled() and _active is not None and _active.panel is panel else None
         previous = state.marker_names.get(name) if state is not None else None
         if previous is not None and previous[0] == color:
             return previous[1]
@@ -570,19 +595,32 @@ def init():
                 state.marker_names[name] = (color, result)
         return result
 
-    CrosshairPanelContainer._populate = populate
-    CrosshairPanelContainer._dispose = dispose
-    CrosshairPanelContainerMeta.as_setShotFlyTimesS = flights
-    CrosshairPanelContainerMeta.as_setGunMarkerColorS = marker_color
+    _hooks = hooks
     try:
-        white_blade_minimum.install(_log)
+        add_hook(CrosshairPanelContainer, '_populate', populate)
+        add_hook(CrosshairPanelContainer, '_dispose', dispose)
+        add_hook(CrosshairPanelContainerMeta, 'as_setShotFlyTimesS', flights)
+        add_hook(CrosshairPanelContainerMeta, 'as_setGunMarkerColorS', marker_color)
     except Exception:
+        fini()
+        raise
+    panel_hooks = len(hooks)
+    try:
+        white_blade_minimum.install(_log, add_hook, enabled)
+    except Exception:
+        _restore_hooks(hooks[panel_hooks:])
+        del hooks[panel_hooks:]
         _log('install minimum markers')
-    _installed = True
 
 
 def fini():
-    _stop()
+    global _hooks
+    hooks, _hooks = _hooks, None
+    try:
+        _stop()
+    finally:
+        if hooks is not None:
+            _restore_hooks(hooks)
 
 
 init()

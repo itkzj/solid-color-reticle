@@ -32,7 +32,7 @@ def _minimum_diameter(player, marker):
     return _NAN, _NAN
 
 
-def install(log):
+def install(log, add_hook, enabled):
     import Math
     from AvatarInputHandler import gun_marker_ctrl as ctrl
     from gui.Scaleform.daapi.view.battle.shared.crosshair import gm_components
@@ -50,7 +50,7 @@ def install(log):
 
     def create_collection(self, components):
         active = _providers
-        if active is None:
+        if not enabled() or active is None:
             return original_collection(self, components)
         markers = tuple(components)
         providers, extra, seen = {}, [], set()
@@ -88,7 +88,7 @@ def install(log):
         return result
 
     def reference(controller):
-        if _providers is not None:
+        if enabled() and _providers is not None:
             pair = _providers.get(id(controller._dataProvider))
             if pair is not None:
                 return pair[1]
@@ -125,6 +125,6 @@ def install(log):
                 log('minimum strategic marker projection')
         return result
 
-    collection.__init__ = create_collection
-    default.update = update_default
-    spg.update = update_spg
+    add_hook(collection, '__init__', create_collection)
+    add_hook(default, 'update', update_default)
+    add_hook(spg, 'update', update_spg)

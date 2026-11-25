@@ -104,6 +104,10 @@ def _traverse(panel, vehicle, player, mode, point, projection):
         if axis is None:
             return empty
         rotation, units_per_radian = axis
+    elif mode == CTRL_MODE_NAME.SNIPER:
+        zoom = panel.sessionProvider.shared.crosshair.getZoomFactor()
+        if zoom is not None and finite(zoom) and zoom > 0:
+            units_per_radian *= zoom
     positions = []
     ratios = []
     for side, distance in ((-1., half_span + relative), (1., half_span - relative)):

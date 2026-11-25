@@ -15,10 +15,12 @@ ROOT = Path(__file__).resolve().parents[1]
 AS3 = ROOT / 'src/as3'
 CLIENT = ROOT / 'src/client'
 FLASH = 'res/gui/flash/'
-MODS = 'mods/2.4.1.1/'
+GAME_VERSION = '2.4.2.0'
+MOD_VERSION = '4.6.1'
+MODS = f'mods/{GAME_VERSION}/'
 # ponytail: pinned to the tested client build, verify linkages before updating.
-HUD_TAG = {'arcade': (2, 175, 'f1b27c13286cb7b92f04b258272584299ecea9ec42be97d9ccede84193540377'),
-           'sniper': (4, 249, '62de4e84c5014f8451597af55f69f1a0c5ca875582d435f94df9cde50ffa890b'),
+HUD_TAG = {'arcade': (2, 175, 'b01afd2d80f050c5ea557088a0cad88c00f3fd4753ee6806b9d6e1bc96b2838d'),
+           'sniper': (4, 249, '4a7323c746bd0657951b5381035d87625aacf922d328e45095fa656c59a3e6be'),
            'strategic': (3, 61, '1174e9997e83c47c820fe3a13ea99ad52abee71dd6a8c93e06e40d6068bd1734')}
 CONTROLS_SHA = 'a0e318c7ee469629e86c6b72282fae5d1423c28e0f3bfbd589feaaf7e65c4565'
 PYTHON = {'mod_white_blade': 'res/scripts/client/gui/mods/mod_white_blade.pyc',
@@ -240,14 +242,14 @@ def build(packages, tools, output):
                             str(CLIENT / (module + '.py')), str(pyc), member[:-1]], check=True)
             files[member] = pyc.read_bytes()
             require(files[member][:4] == b'\x03\xf3\x0d\x0a', 'Expected CPython 2.7 bytecode')
-    files['meta.xml'] = '''<root>
+    files['meta.xml'] = f'''<root>
   <id>local.solid_color_reticle</id>
-  <version>1.1.0-dev</version>
+  <version>{MOD_VERSION}</version>
   <name>纯色瞄准</name>
-  <description>Solid Color Reticle development build. World of Tanks CN 2.4.1.1.</description>
+  <description>Solid Color Reticle. World of Tanks CN {GAME_VERSION}.</description>
 </root>
 '''.encode('utf-8')
-    package = archive_bytes({MODS + 'solid_color_reticle_1.1.0-dev.wotmod': archive_bytes(files)})
+    package = archive_bytes({f'{MODS}solid_color_reticle_{MOD_VERSION}.wotmod': archive_bytes(files)})
     with output.open('xb') as stream:
         stream.write(package)
     require(output.read_bytes() == package, 'Output readback mismatch')
