@@ -27,12 +27,53 @@ package {
         // Move each bar midpoint (230) inward by one quarter; retain both segment lengths.
         private const RAIL_OUTER:Number=257.5, RAIL_INNER:Number=87.5, RAIL_HORIZONTAL:Number=170;
         private const RAIL_LENGTH:Number=538/3;
-        public var data:Object={remaining:NaN,total:NaN,progress:NaN,reloadState:"",health:NaN,maxHealth:NaN,healthRatio:NaN,
+        private var data:Object={remaining:NaN,total:NaN,progress:NaN,reloadState:"",health:NaN,maxHealth:NaN,healthRatio:NaN,
             distance:"",zoom:"",ammo:NaN,capacity:1,loaded:NaN,burstSize:1,burstTime:NaN,
             aimArmor:NaN,aimChance:NaN,aimColor:NaN,
             penetration:NaN,shell:"",height:NaN,splash:0,splashRadiusX:NaN,splashRadiusY:NaN,splashRotation:NaN,splashX:0,splashY:0,flight:NaN,arty:false,
             traverseLeft:NaN,traverseRight:NaN,traverseLeftRatio:NaN,traverseRightRatio:NaN,traverseRotation:0,
             centerType:0,centerOpacity:1,reloadOpacity:1,healthOpacity:1,clipOpacity:1,timeOpacity:1};
+        private const numberFields:Array=["health","maxHealth","total","burstTime","height","splashRadiusX","splashRadiusY","splashRotation","splashX","splashY","flight","penetration","aimArmor","aimChance","aimColor","splash","traverseLeft","traverseRight","traverseLeftRatio","traverseRightRatio","traverseRotation"];
+        public function applySample(value:Object):void {
+            for each(var k:String in numberFields)
+                if(value.hasOwnProperty(k))data[k]=Number(value[k]);
+            if(value.hasOwnProperty("shell"))data.shell=String(value.shell);
+            if(value.readyText is String && value.readyText.length>0)data.readyText=value.readyText;
+        }
+        public function seedPreview():void {
+            if(!isFinite(data.maxHealth))data.maxHealth=1800;
+            if(!isFinite(data.health))data.health=Math.round(data.healthRatio*data.maxHealth);
+            if(!isFinite(data.total))data.total=13.72;
+            if(!isFinite(data.burstTime))data.burstTime=2.5;
+            if(!isFinite(data.penetration))data.penetration=258;
+            if(!data.shell)data.shell="AP";
+            refresh();
+        }
+        private function sameValue(value:*,old:*):Boolean {
+            return value===old || (value is Number && old is Number && isNaN(value) && isNaN(old));
+        }
+        public function setStyle(type:Number,centerOpacity:Number,reloadOpacity:Number,healthOpacity:Number,clipOpacity:Number,timeOpacity:Number):void {
+            if(sameValue(data.centerType,type) && sameValue(data.centerOpacity,centerOpacity) &&
+               sameValue(data.reloadOpacity,reloadOpacity) && sameValue(data.healthOpacity,healthOpacity) &&
+               sameValue(data.clipOpacity,clipOpacity) && sameValue(data.timeOpacity,timeOpacity)) {
+                advanceFrame();
+                return;
+            }
+            data.centerType=type;data.centerOpacity=centerOpacity;data.reloadOpacity=reloadOpacity;
+            data.healthOpacity=healthOpacity;data.clipOpacity=clipOpacity;data.timeOpacity=timeOpacity;
+            refresh();
+        }
+        public function setRemaining(value:Number):void {data.remaining=isFinite(value)?Math.max(0,value):NaN;refresh();}
+        public function setHealthRatio(value:Number):void {
+            data.healthRatio=value;
+            if(isFinite(data.maxHealth))data.health=Math.round(value*data.maxHealth);
+            refresh();
+        }
+        public function setDistanceText(value:String):void {data.distance=value;refresh();}
+        public function setZoomText(value:String):void {data.zoom=value;refresh();}
+        public function setClipParameters(capacity:Number,burst:Number):void {
+            data.capacity=Math.max(1,capacity);data.burstSize=Math.max(1,burst);refresh();
+        }
         private var previous:Object={};
         private var motion:Object={};
         private var railState:Array;
@@ -47,7 +88,7 @@ package {
             var dirty:Object=null;
             for(var key:String in data) {
                 var value:*=data[key], old:*=previous[key];
-                if(value===old || (value is Number && old is Number && isNaN(value) && isNaN(old)))continue;
+                if(sameValue(value,old))continue;
                 previous[key]=value;
                 if(!dirty)dirty={};
                 dirty[key]=true;
@@ -58,7 +99,10 @@ package {
         private function frame(id:String, target:Array, now:Number, duration:Number,
                                snap:Boolean=false, turn:Number=0):Array {
             var track:Object=motion[id];
-            if(!track || !sameNumbers(track.target,target)) {
+            if(target==null) {
+                if(!track)return null;
+                target=track.target;
+            } else if(!track || !sameNumbers(track.target,target)) {
                 var start:Array=track?track.value.slice():[];
                 if(snap || start.length!=target.length)start=target;
                 if(id=="traverse" && start!=target) {
@@ -210,13 +254,15 @@ package {
             }
             if(b<=h-r||b>h+r) {p=railPoint(b);g.lineTo(side*p[0],p[1]);}
         }
+        private static const ARTY_DIAGONAL:Number=Math.sqrt(18*18+26*26);
+        private static const ARTY_POINTS:Array=[[182,84],[200-18/ARTY_DIAGONAL,58+26/ARTY_DIAGONAL],[200,57],[200,-57],[200-18/ARTY_DIAGONAL,-58-26/ARTY_DIAGONAL],[182,-84]];
+        private static const ARTY_LENGTHS:Array=[ARTY_DIAGONAL-1,2,114,2,ARTY_DIAGONAL-1];
+        private static const SHELL_POINTS:Array=[[0,-8],[3.5,-3],[3.5,7],[-3.5,7],[-3.5,-3],[0,-8],[-3.5,4],[3.5,4]];
         private function artyRail(g:Graphics,side:Number,progress:Number,color:uint,width:Number,opacity:Number):void {
             if(opacity<=0||!isFinite(progress)||progress<=0)return;
             // Equal normal stroke width on every segment; trim one unit around each bend.
-            var diagonal:Number=Math.sqrt(18*18+26*26),dx:Number=18/diagonal,dy:Number=26/diagonal;
-            var points:Array=[[182,84],[200-dx,58+dy],[200,57],[200,-57],[200-dx,-58-dy],[182,-84]];
-            var lengths:Array=[diagonal-1,2,114,2,diagonal-1];
-            var left:Number=clamp(progress)*(2*diagonal+116);
+            var points:Array=ARTY_POINTS,lengths:Array=ARTY_LENGTHS;
+            var left:Number=clamp(progress)*(2*ARTY_DIAGONAL+116);
             g.lineStyle(width,color,clamp(opacity),false,LineScaleMode.NORMAL,CapsStyle.ROUND,JointStyle.ROUND);
             g.moveTo(side*182,84);
             for(var i:int=0;i<lengths.length&&left>0;i++) {
@@ -233,7 +279,7 @@ package {
         private function shell(g:Graphics,x:Number,y:Number,color:uint,filled:Boolean,opacity:Number=1,side:Number=0):void {
             if(clamp(opacity)==0)return;
             // One magazine silhouette, explicit backing; sideways tips still travel only horizontally.
-            var points:Array=[[0,-8],[3.5,-3],[3.5,7],[-3.5,7],[-3.5,-3],[0,-8],[-3.5,4],[3.5,4]];
+            var points:Array=SHELL_POINTS;
             for(var pass:int=0;pass<2;pass++) {
                 var ink:uint=pass?color:0x10181E;
                 g.lineStyle(pass?1:3,ink,clamp(opacity),false,LineScaleMode.NORMAL,CapsStyle.ROUND,JointStyle.ROUND);
@@ -323,18 +369,25 @@ package {
                     refreshGraphics();
                 }
             }
+            renderMotion(dirty!=null);
+        }
+        public function advanceFrame():void {
+            if(!motion.reload)refresh();
+            else renderMotion(false);
+        }
+        private function renderMotion(update:Boolean):void {
             var now:Number=getTimer();
             var left:Number=data.traverseLeft, right:Number=data.traverseRight;
             var lr:Number=data.traverseLeftRatio, rr:Number=data.traverseRightRatio;
             var rotation:Number=data.arty?data.traverseRotation:0;
             var valid:Boolean=isFinite(left)&&left<=0&&isFinite(right)&&right>=0&&isFinite(lr)&&isFinite(rr)&&isFinite(rotation);
-            var values:Array=frame("traverse",valid?[left,right,lr,rr,rotation]:[],now,100,false,360);
+            var values:Array=frame("traverse",update?(valid?[left,right,lr,rr,rotation]:[]):null,now,100,false,360);
             if(values)traverseMarks(values);
 
             var p:Number=reloadCharge();
             var scanning:Number=data.reloadState=="reloadingProgress"&&isFinite(data.progress)?1:0;
             var reload:Object=motion.reload;
-            values=frame("reload",[p,scanning],now,90,!reload||!scanning||reload.target[1]!=scanning||p<reload.target[0]);
+            values=frame("reload",update?[p,scanning]:null,now,90,!reload||!scanning||reload.target[1]!=scanning||p<reload.target[0]);
             var reloadOpacity:Number=clamp(data.reloadOpacity);
             if(values || (data.arty && drawnReloadOpacity!=reloadOpacity)) {
                 drawnReloadOpacity=reloadOpacity;
@@ -348,7 +401,7 @@ package {
                 var angle:Number=isFinite(data.splashRotation)?data.splashRotation:0;
                 var splash:Number=data.splash>0?data.splash:0;
                 var last:Object=motion.splash;
-                values=frame("splash",isFinite(rx)&&isFinite(ry)&&rx>0&&ry>0?[rx,ry,sx,sy,splash,angle]:[],
+                values=frame("splash",update?(isFinite(rx)&&isFinite(ry)&&rx>0&&ry>0?[rx,ry,sx,sy,splash,angle]:[]):null,
                     now,100,last && last.target[4]!=splash,180);
                 if(values)drawFootprint(values);
             }

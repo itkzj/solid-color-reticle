@@ -36,7 +36,7 @@ RING = '''
     private var drawn:Number=NaN;
     private var drawnBold:Boolean;
     private var nativeRing:Boolean=false;
-    private var stockChildren:Array;
+    private var stockChildren:Dictionary;
     private var nativeProgress:Number=NaN;
     private var nativeState:String;
 
@@ -46,7 +46,7 @@ RING = '''
         ink.visible=!value;
         if (value) {
             removeEventListener(Event.ENTER_FRAME,onFrame);
-            for each (var child:DisplayObject in stockChildren) child.visible=true;
+            for (var child:Object in stockChildren) child.visible=true;
             stockChildren=null;
             var percent:Number=nativeProgress;
             super.setThickness(bold?"bold":"thin");
@@ -60,11 +60,11 @@ RING = '''
         }
     }
     private function hideStock():void {
-        if (!stockChildren) stockChildren=[];
+        if (!stockChildren) stockChildren=new Dictionary(true);
         for (var i:int=0;i<numChildren;i++) {
             var child:DisplayObject=getChildAt(i);
             if (child!=ink && child.visible) {
-                stockChildren.push(child);
+                stockChildren[child]=true;
                 child.visible=false;
             }
         }
@@ -246,7 +246,8 @@ POINTS = '''
     public function whiteBladeTint():void {
         if (nativeRing) return;
         var tint:ColorTransform=transform.colorTransform;
-        if (tint.toString()!=identity.toString()) {
+        if (tint.redMultiplier!=1 || tint.greenMultiplier!=1 || tint.blueMultiplier!=1 || tint.alphaMultiplier!=1 ||
+            tint.redOffset!=0 || tint.greenOffset!=0 || tint.blueOffset!=0 || tint.alphaOffset!=0) {
             stockTint=tint;
             transform.colorTransform=identity;
         }
