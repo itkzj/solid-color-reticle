@@ -10,6 +10,7 @@ import BigWorld
 from gui.Scaleform.daapi.view.battle.shared.crosshair.container import CrosshairPanelContainer
 from gui.Scaleform.daapi.view.meta.CrosshairPanelContainerMeta import CrosshairPanelContainerMeta
 import white_blade_minimum
+import white_blade_settings
 from white_blade_penetration import estimate
 
 
@@ -62,6 +63,7 @@ def _ready_text():
 class _Bridge(object):
     def __init__(self, panel):
         self.panel = panel
+        self.options = white_blade_settings.snapshot()
         self.callback = None
         self.flights = {}
         self.reload_gun = None
@@ -202,7 +204,7 @@ class _Bridge(object):
         color, aim = 'normal', None
         if entity is not None:
             self.team = self.panel.sessionProvider.getArenaDP().getNumberOfTeam()
-        if primary and entity is not None:
+        if primary and entity is not None and self.options['penetration']:
             try:
                 aim = self.aim_estimate(marker, entity)
                 if aim is not None:
@@ -240,7 +242,8 @@ class _Bridge(object):
             if entity is None and previous is None:
                 return
             self.marker_targets[marker_type] = entity
-            primary = hasattr(self.panel, 'getViewID') and marker_type == self.primary_aim_marker()
+            primary = (self.options['penetration'] and hasattr(self.panel, 'getViewID')
+                       and marker_type == self.primary_aim_marker())
             if primary:
                 now = BigWorld.time()
                 # Capture only the newest event between samples. Acquiring or losing a target bypasses the interval.
@@ -369,7 +372,9 @@ class _Bridge(object):
 
     def sample(self):
         data = dict.fromkeys(_DATA_FIELDS + _TRAVERSE_FIELDS, _NAN)
-        data.update(shell='', readyText=self.ready_text)
+        data.update(shell='', readyText=self.ready_text,
+                    nativeRing=self.options['native_ring'], glowCross=self.options['glow'],
+                    glowSize=self.options['glow_size'], glowDistance=self.options['glow_distance'])
         self.check_targets()
         vehicle = None
         try:
@@ -411,8 +416,9 @@ class _Bridge(object):
                         if power:
                             # Native ammo_ctrl._GunSettings.fromVehicle, source line 119.
                             data['penetration'] = _number(power[0])
-                        # Native vehicles._readShellLocal, source lines 8869/8956/9027.
-                        data['splash'] = _number(getattr(shell.type, 'explosionRadius', None))
+                        if self.options['splash']:
+                            # Native vehicles._readShellLocal supplies the shell's explosion radius.
+                            data['splash'] = _number(getattr(shell.type, 'explosionRadius', None))
                         if not data['flight'] > 0:
                             data['flight'] = self.impact_flight(vehicle, shot)
                         break
@@ -424,7 +430,8 @@ class _Bridge(object):
                 data.update(aimArmor=aim[0], aimChance=aim[1], aimColor=aim[2])
         if self.geometry is not None:
             try:
-                footprint, traverse = self.geometry.sample(self.panel, data['splash'], vehicle, _log)
+                footprint, traverse = self.geometry.sample(
+                    self.panel, data['splash'], vehicle, _log, self.options['traverse'])
                 data.update(footprint)
                 data.update(zip(_TRAVERSE_FIELDS, traverse))
             except Exception:
@@ -552,7 +559,8 @@ def init():
         try:
             _stop()
             _active = _Bridge(panel)
-            white_blade_minimum.start()
+            if _active.options['minimum']:
+                white_blade_minimum.start()
         except Exception:
             _log('populate bridge')
         try:
@@ -611,6 +619,7 @@ def init():
         _restore_hooks(hooks[panel_hooks:])
         del hooks[panel_hooks:]
         _log('install minimum markers')
+    white_blade_settings.install(_log, enabled)
 
 
 def fini():

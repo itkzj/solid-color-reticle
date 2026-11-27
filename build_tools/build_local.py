@@ -3,11 +3,14 @@
 import argparse
 from hashlib import sha256
 from io import BytesIO
+import json
 from pathlib import Path
+import re
 import runpy
 import struct
 import subprocess
 from tempfile import TemporaryDirectory
+from urllib.request import Request, urlopen
 from zipfile import ZipFile, ZIP_STORED
 import zlib
 
@@ -16,7 +19,7 @@ AS3 = ROOT / 'src/as3'
 CLIENT = ROOT / 'src/client'
 FLASH = 'res/gui/flash/'
 GAME_VERSION = '2.4.2.0'
-MOD_VERSION = '4.6.1'
+MOD_VERSION = '4.7.0'
 MODS = f'mods/{GAME_VERSION}/'
 # ponytail: pinned to the tested client build, verify linkages before updating.
 HUD_TAG = {'arcade': (2, 175, 'b01afd2d80f050c5ea557088a0cad88c00f3fd4753ee6806b9d6e1bc96b2838d'),
@@ -26,7 +29,8 @@ CONTROLS_SHA = 'a0e318c7ee469629e86c6b72282fae5d1423c28e0f3bfbd589feaaf7e65c4565
 PYTHON = {'mod_white_blade': 'res/scripts/client/gui/mods/mod_white_blade.pyc',
           'white_blade_minimum': 'res/scripts/client/white_blade_minimum.pyc',
           'white_blade_geometry': 'res/scripts/client/white_blade_geometry.pyc',
-          'white_blade_penetration': 'res/scripts/client/white_blade_penetration.pyc'}
+          'white_blade_penetration': 'res/scripts/client/white_blade_penetration.pyc',
+          'white_blade_settings': 'res/scripts/client/white_blade_settings.pyc'}
 
 
 def require(ok, message):
@@ -204,10 +208,53 @@ def compile_adapter(tools, work, main, stubs, adapters):
     return donor.read_bytes()
 
 
+def download(url, limit):
+    request = Request(url, headers={'User-Agent': 'Solid-Color-Reticle-Builder'})
+    try:
+        with urlopen(request, timeout=30) as response:
+            require(response.url.startswith('https://'), 'Expected HTTPS: ' + url)
+            data = response.read(limit + 1)
+    except OSError as error:
+        raise OSError(f'Cannot download {url}: {error}') from error
+    require(0 < len(data) <= limit, 'Unexpected download size: ' + url)
+    return data
+
+
+def menu_files():
+    release = json.loads(download('https://api.github.com/repos/Aslain/modmenu/releases/latest', 1024 * 1024))
+    tag = release['tag_name']
+    version = re.fullmatch(r'v?([0-9]+(?:\.[0-9]+)+)', tag)
+    require(version is not None, 'Unexpected Aslain ModMenu release tag: ' + tag)
+    name = f'aslain.modmenu_{version[1]}.wotmod'
+    assets = [asset for asset in release['assets'] if asset['name'] == name]
+    require(len(assets) == 1 and assets[0].get('state') == 'uploaded', 'Missing release asset: ' + name)
+    asset = assets[0]
+    url = f'https://github.com/Aslain/modmenu/releases/download/{tag}/{name}'
+    require(asset['browser_download_url'] == url, 'Unexpected Aslain ModMenu download URL')
+    size = asset['size']
+    require(type(size) is int and 0 < size <= 32 * 1024 * 1024, 'Unexpected Aslain ModMenu asset size')
+    data = download(url, size)
+    require(len(data) == size and 'sha256:' + sha256(data).hexdigest() == asset.get('digest'),
+            'GitHub release size or SHA-256 mismatch: ' + name)
+
+    # ponytail: Gameface is pinned to the tested release; update it if ModMenu raises its minimum.
+    gameface = 'net.openwg.gameface_1.2.2.wotmod'
+    loader = download('https://gitlab.com/api/v4/projects/68695173/uploads/'
+                      'a802bb95952c95d37092baff511bc9e7/' + gameface, 48445)
+    require(sha256(loader).hexdigest() == '2bb65f28663e3ab34b5a1102a1bbd1f6e17a65e1f6a898a8645c4ab732b50184',
+            'SHA-256 mismatch: ' + gameface)
+    license_text = download('https://gitlab.com/openwg/wot.gameface/-/raw/v1.2.2/LICENSE', 4096)
+    require(sha256(license_text).hexdigest() == 'ae7fdf07fd99a0c2c616ace3d07b50d7063a33a3bc6a9173098aa75bc93833a9',
+            'SHA-256 mismatch: OpenWG Gameface license')
+    print(f'Bundling official {name} and {gameface}', flush=True)
+    return {MODS + name: data, MODS + gameface: loader, 'OpenWG-Gameface-LICENSE.txt': license_text}
+
+
 def build(packages, tools, output):
     require(not output.exists(), 'Output already exists')
     controls_filename = 'crosshairControls.swf'
     stock_controls = read_stock(packages, 1, controls_filename, CONTROLS_SHA)
+    dependencies = menu_files()
     files = {}
     render = runpy.run_path(str(AS3 / 'adapter.py'))['render']
     with TemporaryDirectory(prefix='solid-color-reticle-', dir=output.parent) as temp:
@@ -249,7 +296,8 @@ def build(packages, tools, output):
   <description>Solid Color Reticle. World of Tanks CN {GAME_VERSION}.</description>
 </root>
 '''.encode('utf-8')
-    package = archive_bytes({f'{MODS}solid_color_reticle_{MOD_VERSION}.wotmod': archive_bytes(files)})
+    package = archive_bytes({f'{MODS}solid_color_reticle_{MOD_VERSION}.wotmod': archive_bytes(files),
+                             **dependencies})
     with output.open('xb') as stream:
         stream.write(package)
     require(output.read_bytes() == package, 'Output readback mismatch')

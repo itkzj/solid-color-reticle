@@ -78,6 +78,7 @@ package {
         private static const BLADE_SAMPLES:int=4;
         // V19's placed blade reaches about 239.4 local units from the centre.
         private static const BLADE_RADIUS:Number=239.4;
+        private static const BLADE_INNER_RADIUS:Number=BLADE_RADIUS*BLADE_GAP/(BLADE_LENGTH+BLADE_GAP);
         private static var bladeTexture:BitmapData;
 
         public static function gun(g:Graphics, type:Number, color:uint):void {
@@ -109,23 +110,34 @@ package {
             }
         }
 
-        public static function drawBlades(g:Graphics):void {
+        public static function bladeStart(distance:Number, limit:Number):Number {
+            var near:Number=Math.min(BLADE_INNER_RADIUS,limit);
+            // The 5% detent keeps the original gap.
+            return distance<=.05?near*(distance/.05):near+(limit-near)*(distance-.05)/.95;
+        }
+
+        public static function drawBlades(g:Graphics, size:Number=1, start:Number=NaN):void {
+            g.clear();
             if (!bladeTexture) bladeTexture=makeBlade();
+            if (isNaN(start)) start=BLADE_INNER_RADIUS;
             var image:BitmapData=bladeTexture;
-            var scale:Number=BLADE_RADIUS*BLADE_SAMPLES/image.width;
-            var length:Number=BLADE_RADIUS;
+            var scale:Number=BLADE_RADIUS*BLADE_SAMPLES/image.width*size;
+            var length:Number=BLADE_RADIUS*size;
             var half:Number=BLADE_HALF_HEIGHT*scale;
+            // The texture includes padding before each arm's inner tip.
+            var offset:Number=start-BLADE_INNER_RADIUS*size;
             for (var x:int=-1;x<=1;x+=2) {
                 for (var y:int=-1;y<=1;y+=2) {
                     var dx:Number=x*Math.SQRT1_2, dy:Number=y*Math.SQRT1_2;
+                    var px:Number=dx*offset, py:Number=dy*offset;
                     var matrix:Matrix=new Matrix(dx*scale/BLADE_SAMPLES,dy*scale/BLADE_SAMPLES,
-                        -dy*scale/BLADE_SAMPLES,dx*scale/BLADE_SAMPLES,dy*half,-dx*half);
+                        -dy*scale/BLADE_SAMPLES,dx*scale/BLADE_SAMPLES,px+dy*half,py-dx*half);
                     g.beginBitmapFill(image,matrix,false,true);
-                    g.moveTo(dy*half,-dx*half);
-                    g.lineTo(dx*length+dy*half,dy*length-dx*half);
-                    g.lineTo(dx*length-dy*half,dy*length+dx*half);
-                    g.lineTo(-dy*half,dx*half);
-                    g.lineTo(dy*half,-dx*half);
+                    g.moveTo(px+dy*half,py-dx*half);
+                    g.lineTo(px+dx*length+dy*half,py+dy*length-dx*half);
+                    g.lineTo(px+dx*length-dy*half,py+dy*length+dx*half);
+                    g.lineTo(px-dy*half,py+dx*half);
+                    g.lineTo(px+dy*half,py-dx*half);
                     g.endFill();
                 }
             }

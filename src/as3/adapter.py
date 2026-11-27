@@ -92,6 +92,13 @@ METHODS='''
                 if(value.hasOwnProperty(k))d[k]=Number(value[k]);
             if(value.hasOwnProperty("shell"))d.shell=String(value.shell);
             if(value.readyText is String && value.readyText.length>0)d.readyText=value.readyText;
+            if(value.hasOwnProperty("nativeRing") && value.hasOwnProperty("glowCross")) {
+                var size:*=value.glowSize;
+                if(!(size is Number) || !(size>=5 && size<=200) || size%5!=0) size=100;
+                var distance:*=value.glowDistance;
+                if(!(distance is Number) || !(distance>=0 && distance<=100) || distance%1!=0) distance=5;
+                WhiteBladeMarkers.configure(parent,value.nativeRing===true,value.glowCross===true,size/100,distance/100);
+            }
             h.refresh();return true;
         }
         public function as_whiteBladeAim(armor:Number,chance:Number,color:Number):Boolean {

@@ -128,7 +128,7 @@ class Geometry(object):
     client = aih_global_binding.bindRO(aih_global_binding.BINDING_ID.CLIENT_SPG_GUN_MARKER_DATA_PROVIDER)
     server = aih_global_binding.bindRO(aih_global_binding.BINDING_ID.SERVER_SPG_GUN_MARKER_DATA_PROVIDER)
 
-    def sample(self, panel, splash, vehicle, log):
+    def sample(self, panel, splash, vehicle, log, traverse_enabled=True):
         data = dict(height=_NAN, splashRadiusX=_NAN, splashRadiusY=_NAN,
                     splashRotation=_NAN, splashX=0., splashY=0.)
         player = BigWorld.player()
@@ -156,6 +156,8 @@ class Geometry(object):
                     data['height'] = abs(camera.translation.y - point.y)
                 except Exception:
                     log('camera height')
+        if not traverse_enabled:
+            return data, _EMPTY_TRAVERSE
         try:
             return data, _traverse(panel, vehicle, player, mode, point, projection)
         except Exception:

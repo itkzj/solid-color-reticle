@@ -35,9 +35,49 @@ RING = '''
     private var current:Number=NaN;
     private var drawn:Number=NaN;
     private var drawnBold:Boolean;
+    private var nativeRing:Boolean=false;
+    private var stockChildren:Array;
+    private var nativeProgress:Number=NaN;
+    private var nativeState:String;
 
+    public function setWhiteBladeNativeRing(value:Boolean):void {
+        if (nativeRing==value) return;
+        nativeRing=value;
+        ink.visible=!value;
+        if (value) {
+            removeEventListener(Event.ENTER_FRAME,onFrame);
+            for each (var child:DisplayObject in stockChildren) child.visible=true;
+            stockChildren=null;
+            var percent:Number=nativeProgress;
+            super.setThickness(bold?"bold":"thin");
+            if (nativeState!=null) super.setReloadingState(nativeState);
+            if (isFinite(percent)) super.setReloadingAsPercent(percent,true);
+            nativeProgress=percent;
+        } else {
+            hideStock();
+            if (isFinite(nativeProgress)) setReloadingAsPercent(nativeProgress,true);
+            if (nativeState!=null) setReloadingState(nativeState);
+        }
+    }
+    private function hideStock():void {
+        if (!stockChildren) stockChildren=[];
+        for (var i:int=0;i<numChildren;i++) {
+            var child:DisplayObject=getChildAt(i);
+            if (child!=ink && child.visible) {
+                stockChildren.push(child);
+                child.visible=false;
+            }
+        }
+    }
+    override protected function draw():void {
+        super.draw();
+        if (ink && !nativeRing) hideStock();
+    }
     override public function setReloadingAsPercent(value:Number, force:Boolean=false):void {
-        if (!PROGRESS || !isFinite(value)) return;
+        if (!isFinite(value)) return;
+        nativeProgress=value;
+        if (nativeRing) {super.setReloadingAsPercent(value,force);return;}
+        if (!PROGRESS) return;
         var next:Number=Math.max(0,Math.min(1,value));
         if (force || next<progress) {
             snap(next);
@@ -49,11 +89,14 @@ RING = '''
         }
     }
     override public function setReloadingState(state:String):void {
+        nativeState=state;
+        if (nativeRing) {super.setReloadingState(state);return;}
         var ready:Boolean=state=="reloadingEnded" || state=="reloadingEnd";
         if (!PROGRESS || state!="reloadingProgress") snap(ready?1:0);
     }
     override public function setThickness(value:String):void {
         bold=value=="bold";
+        if (nativeRing) {super.setThickness(value);return;}
         paint(isFinite(current)?current:progress);
     }
     private function snap(value:Number):void {
@@ -86,6 +129,35 @@ GUN = '''
     private var kind:Number=-1;
     private var state:String="normal";
     private var ready:Boolean=false;
+    private var glowCross:Boolean=true;
+    private var glowDistance:Number=.05;
+    private var glowScale:Number=1;
+    private var drawnBladeScale:Number=1;
+    private var drawnBladeStart:Number=NaN;
+
+    public function setWhiteBladeGlow(value:Boolean,scale:Number,distance:Number):void {
+        glowDistance=distance;
+        glowScale=scale;
+        if (blade && value && blade.visible) positionBlades();
+        if (glowCross==value) return;
+        glowCross=value;
+        invalidate();
+    }
+    private function positionBlades():void {
+        if (!stage || stage.stageWidth<=0 || stage.stageHeight<=0) return;
+        var matrix:Matrix=blade.transform.concatenatedMatrix;
+        // Convert the screen radius using the larger of the two diagonal scales.
+        var ax:Number=matrix.a+matrix.c, ay:Number=matrix.b+matrix.d;
+        var bx:Number=matrix.a-matrix.c, by:Number=matrix.b-matrix.d;
+        var diagonalScale:Number=Math.sqrt(Math.max(ax*ax+ay*ay,bx*bx+by*by)/2);
+        if (!isFinite(diagonalScale) || diagonalScale<=0) return;
+        var limit:Number=Math.min(stage.stageWidth,stage.stageHeight)/(3*diagonalScale);
+        var start:Number=SolidReticleArt.bladeStart(glowDistance,limit);
+        if (start==drawnBladeStart && glowScale==drawnBladeScale) return;
+        SolidReticleArt.drawBlades(blade.graphics,glowScale,start);
+        drawnBladeStart=start;
+        drawnBladeScale=glowScale;
+    }
     private const colors:Object={red:0xF02311,orange:0xFF9900,green:SolidReticleArt.GREEN,
         yellow:0xFFFF00,purple:0x6064DA,pink:0xCC99FF};
 
@@ -113,8 +185,12 @@ GUN = '''
         var hasAim:Boolean=!isNaN(aimColor);
         var result:Boolean=kind%3==0 && (hasAim || colors.hasOwnProperty(state));
         var color:uint=result?(hasAim?uint(aimColor):uint(colors[state])):kind%3==1?(ready?0xC3FF68:0xF02311):SolidReticleArt.WHITE;
-        if (blade.visible!=result) blade.visible=result;
-        if (result && bladeColor!=color) {
+        var showBlade:Boolean=glowCross && result;
+        if (blade.visible!=showBlade) {
+            blade.visible=showBlade;
+            if (showBlade) positionBlades();
+        }
+        if (showBlade && bladeColor!=color) {
             bladeColor=color;
             var red:uint=(color>>16)&255, green:uint=(color>>8)&255, blue:uint=color&255;
             blade.transform.colorTransform=new ColorTransform((255-red)/255,(240-green)/255,
@@ -140,10 +216,45 @@ MINIMUM = '''
 
 
 POINTS = '''
+    private const identity:ColorTransform=new ColorTransform();
     private var drawn:uint;
+    private var nativeRing:Boolean=false;
+    private var lastProgress:Number;
+    private var hidden:Dictionary=new Dictionary(true);
+    private var stockFilters:Dictionary=new Dictionary(true);
+    private var stockTint:ColorTransform;
+
+    public function setWhiteBladeNativeRing(value:Boolean):void {
+        if (IMPACT || nativeRing==value || !_nodes) return;
+        nativeRing=value;
+        if (value) {
+            for (var child:Object in hidden) child.visible=true;
+            for each (var node:MovieClip in _nodes) {
+                if (!node) continue;
+                node.graphics.clear();
+                if (node in stockFilters) node.filters=stockFilters[node];
+            }
+            hidden=new Dictionary(true);
+            stockFilters=new Dictionary(true);
+            if (stockTint) transform.colorTransform=stockTint;
+            stockTint=null;
+        } else {
+            drawn=0;
+            paint(lastProgress>=1);
+        }
+    }
+    public function whiteBladeTint():void {
+        if (nativeRing) return;
+        var tint:ColorTransform=transform.colorTransform;
+        if (tint.toString()!=identity.toString()) {
+            stockTint=tint;
+            transform.colorTransform=identity;
+        }
+    }
     override protected function setCurrentReloading(value:Number):void {
         super.setCurrentReloading(value);
-        paint(IMPACT || value>=1);
+        lastProgress=value;
+        if (!nativeRing) paint(IMPACT || value>=1);
     }
     private function paint(ready:Boolean):void {
         var color:uint=ready?SolidReticleArt.GREEN:0xFF3300;
@@ -151,8 +262,16 @@ POINTS = '''
         drawn=color;
         for each (var node:MovieClip in _nodes) {
             if (!node) continue;
-            for (var i:int=0;i<node.numChildren;i++) node.getChildAt(i).visible=false;
-            node.filters=[];
+            for (var i:int=0;i<node.numChildren;i++) {
+                var child:DisplayObject=node.getChildAt(i);
+                if (!child.visible) continue;
+                hidden[child]=true;
+                child.visible=false;
+            }
+            if (node.filters.length) {
+                stockFilters[node]=node.filters;
+                node.filters=[];
+            }
             SolidReticleArt.point(node.graphics,color);
         }
     }
@@ -173,10 +292,10 @@ def render(name):
     else:
         solid = name == 'continiusLine'
         methods = RING.replace('SOLID', str(solid).lower()).replace('PROGRESS', str(solid or name == 'radius_bar').lower())
-        init = ('for (var i:int=0;i<numChildren;i++) getChildAt(i).visible=false; '
-                'stop(); ink=new Shape(); addChild(ink); '
+        init = ('stop(); ink=new Shape(); addChild(ink); hideStock(); '
                 + ('ink.rotation=90; ' if solid else '') + 'paint();')
-    return ('package { import flash.display.MovieClip; import flash.display.Shape; import flash.geom.ColorTransform; '
-            'import flash.events.Event; import flash.utils.getTimer; public class '
+    return ('package { import flash.display.DisplayObject; import flash.display.MovieClip; '
+            'import flash.display.Shape; import flash.geom.ColorTransform; import flash.geom.Matrix; '
+            'import flash.events.Event; import flash.utils.Dictionary; import flash.utils.getTimer; public class '
             + name + ' extends ' + base(name) + ' { public function ' + name + '() { super();'
             + init + '}\n' + methods + '\n}}\n')
